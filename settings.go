@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type Settings struct {
-	Detail        float64 `json:"detail"`
-	Roughness     float64 `json:"roughness"`
-	Width         int     `json:"width"`
-	Height        int     `json:"height"`
-	Lakes         int     `json:"lakes"`
-	LakeSizeLower float64 `json:"lake_size_lower"`
-	LakeSizeUpper float64 `json:"lake_size_upper"`
+	Detail         float64 `json:"detail"`
+	Roughness      float64 `json:"roughness"`
+	Width          int     `json:"width"`
+	Height         int     `json:"height"`
+	Lakes          int     `json:"lakes"`
+	LakeSizeLower  float64 `json:"lake_size_lower"`
+	LakeSizeUpper  float64 `json:"lake_size_upper"`
+	MinTreeSize    float64 `json:"min_tree_size"`
+	MaxTreeSize    float64 `json:"max_tree_size"`
+	TreeCoverage   float64 `json:"tree_coverage"`
+	TreeClumpiness float64 `json:"tree_clumpiness"`
+	Seed           int64   `json:"seed"`
 }
 
 func (s *Settings) Save() error {
@@ -48,7 +54,20 @@ func LoadSettings() (*Settings, error) {
 	file, err := os.Open(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSizeLower: 1, LakeSizeUpper: 5}, nil
+			return &Settings{
+				Detail:         1,
+				Roughness:      0,
+				Width:          300,
+				Height:         300,
+				Lakes:          0,
+				LakeSizeLower:  1,
+				LakeSizeUpper:  5,
+				MinTreeSize:    5,
+				MaxTreeSize:    20,
+				TreeCoverage:   20,
+				TreeClumpiness: 50,
+				Seed:           time.Now().UnixNano(),
+			}, nil
 		}
 		return nil, err
 	}

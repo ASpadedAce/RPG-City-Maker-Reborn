@@ -2,8 +2,15 @@ package main
 
 import (
 	"fmt"
+	"image"
+	"image/color"
 	"log"
 	"strconv"
+	"time"
+
+	"image/png"
+	"os"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -24,12 +31,6 @@ func main() {
 		settings = &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSizeLower: 1, LakeSizeUpper: 5}
 	}
 
-	w.SetOnClosed(func() {
-		if err := settings.Save(); err != nil {
-			log.Println("Error saving settings:", err)
-		}
-	})
-
 	canvasImg := &canvas.Image{
 		FillMode: canvas.ImageFillContain,
 	}
@@ -38,13 +39,74 @@ func main() {
 		FillMode: canvas.ImageFillContain,
 	}
 
-	// Initial image generation
-	noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail))
-	canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg)
-	darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
-	compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
-	heightmapImg.Image = compositeImg
-	canvasImg.Image = canvasWithLakes
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatal("Failed to get user config dir:", err)
+	}
+	appConfigDir := filepath.Join(configDir, "rpgcitymakerreborn")
+
+	canvasPath := filepath.Join(appConfigDir, "canvas.png")
+	heightmapPath := filepath.Join(appConfigDir, "heightmap.png")
+
+	w.SetOnClosed(func() {
+		if err := settings.Save(); err != nil {
+			log.Println("Error saving settings:", err)
+		}
+
+		if canvasImg.Image != nil {
+			canvasFile, err := os.Create(canvasPath)
+			if err != nil {
+				log.Println("Failed to create canvas file:", err)
+			} else {
+				defer canvasFile.Close()
+				if err := png.Encode(canvasFile, canvasImg.Image); err != nil {
+					log.Println("Failed to encode canvas image:", err)
+				}
+			}
+		}
+
+		if heightmapImg.Image != nil {
+			heightmapFile, err := os.Create(heightmapPath)
+			if err != nil {
+				log.Println("Failed to create heightmap file:", err)
+			} else {
+				defer heightmapFile.Close()
+				if err := png.Encode(heightmapFile, heightmapImg.Image); err != nil {
+					log.Println("Failed to encode heightmap image:", err)
+				}
+			}
+		}
+	})
+
+	canvasFile, err := os.Open(canvasPath)
+	if err == nil {
+		defer canvasFile.Close()
+		img, err := png.Decode(canvasFile)
+		if err == nil {
+			canvasImg.Image = img
+		}
+	}
+
+	heightmapFile, err := os.Open(heightmapPath)
+	if err == nil {
+		defer heightmapFile.Close()
+		img, err := png.Decode(heightmapFile)
+		if err == nil {
+			heightmapImg.Image = img
+		}
+	}
+
+	if canvasImg.Image == nil || heightmapImg.Image == nil {
+		// Initial image generation
+		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+		lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+		finalImage := lakeImage.(*image.RGBA)
+		GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+		darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
+		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+		heightmapImg.Image = compositeImg
+		canvasImg.Image = finalImage
+	}
 
 	detailLabel := widget.NewLabel(fmt.Sprintf("Detail: %.0f", settings.Detail))
 	detailSlider := widget.NewSlider(1, 16)
@@ -95,33 +157,111 @@ func main() {
 	}
 	lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
 
-	widthEntry := widget.NewEntry()
-	widthEntry.SetText(strconv.Itoa(settings.Width))
-	widthEntry.OnChanged = func(s string) {
-		val, err := strconv.Atoi(s)
-		if err == nil {
-			settings.Width = val
-		}
-	}
+	minTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
+	minTreeSizeSlider := widget.NewSlider(1, 150)
+	maxTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
+	maxTreeSizeSlider := widget.NewSlider(1, 150)
 
-	heightEntry := widget.NewEntry()
-	heightEntry.SetText(strconv.Itoa(settings.Height))
-	heightEntry.OnChanged = func(s string) {
-		val, err := strconv.Atoi(s)
-		if err == nil {
-			settings.Height = val
+	minTreeSizeSlider.OnChanged = func(val float64) {
+		settings.MinTreeSize = val
+		if settings.MinTreeSize > settings.MaxTreeSize {
+			settings.MaxTreeSize = settings.MinTreeSize
+			maxTreeSizeSlider.SetValue(settings.MaxTreeSize)
 		}
+		minTreeSizeLabel.SetText(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
 	}
+	minTreeSizeSlider.SetValue(settings.MinTreeSize)
+
+	maxTreeSizeSlider.OnChanged = func(val float64) {
+		settings.MaxTreeSize = val
+		if settings.MaxTreeSize < settings.MinTreeSize {
+			settings.MinTreeSize = settings.MaxTreeSize
+			minTreeSizeSlider.SetValue(settings.MinTreeSize)
+		}
+		maxTreeSizeLabel.SetText(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
+	}
+	maxTreeSizeSlider.SetValue(settings.MaxTreeSize)
+
+	treeCoverageLabel := widget.NewLabel(fmt.Sprintf("Tree Coverage: %.0f%%", settings.TreeCoverage))
+	treeCoverageSlider := widget.NewSlider(1, 100)
+	treeCoverageSlider.OnChanged = func(val float64) {
+		settings.TreeCoverage = val
+		treeCoverageLabel.SetText(fmt.Sprintf("Tree Coverage: %.0f%%", settings.TreeCoverage))
+	}
+	treeCoverageSlider.SetValue(settings.TreeCoverage)
+
+	treeClumpinessLabel := widget.NewLabel(fmt.Sprintf("Tree Clumpiness: %.0f%%", settings.TreeClumpiness))
+	treeClumpinessSlider := widget.NewSlider(0, 100)
+	treeClumpinessSlider.OnChanged = func(val float64) {
+		settings.TreeClumpiness = val
+		treeClumpinessLabel.SetText(fmt.Sprintf("Tree Clumpiness: %.0f%%", settings.TreeClumpiness))
+	}
+	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
+
+	errorLabel := canvas.NewText("", color.RGBA{R: 255, A: 255})
+	errorLabel.TextSize = 12
+	errorLabel.Hide()
 
 	generateBtn := widget.NewButton("Generate", func() {
-		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail))
-		canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg)
+		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+		lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+		finalImage := lakeImage.(*image.RGBA)
+		GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 		heightmapImg.Image = compositeImg
 		heightmapImg.Refresh()
-		canvasImg.Image = canvasWithLakes
+		canvasImg.Image = finalImage
 		canvasImg.Refresh()
+	})
+
+	widthEntry := widget.NewEntry()
+	widthEntry.SetText(strconv.Itoa(settings.Width))
+	widthEntry.OnChanged = func(s string) {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			errorLabel.Text = "Width must be a number"
+			errorLabel.Show()
+			generateBtn.Disable()
+			return
+		}
+		errorLabel.Hide()
+		generateBtn.Enable()
+		settings.Width = val
+	}
+	heightEntry := widget.NewEntry()
+	heightEntry.SetText(strconv.Itoa(settings.Height))
+	heightEntry.OnChanged = func(s string) {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			errorLabel.Text = "Height must be a number"
+			errorLabel.Show()
+			generateBtn.Disable()
+			return
+		}
+		errorLabel.Hide()
+		generateBtn.Enable()
+		settings.Height = val
+	}
+
+	seedEntry := widget.NewEntry()
+	seedEntry.SetText(strconv.FormatInt(settings.Seed, 10))
+	seedEntry.OnChanged = func(s string) {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			errorLabel.Text = "Seed must be a number"
+			errorLabel.Show()
+			generateBtn.Disable()
+			return
+		}
+		errorLabel.Hide()
+		generateBtn.Enable()
+		settings.Seed = val
+	}
+
+	randomizeBtn := widget.NewButton("Randomize", func() {
+		settings.Seed = time.Now().UnixNano()
+		seedEntry.SetText(strconv.FormatInt(settings.Seed, 10))
 	})
 
 	terrainTab := container.NewTabItem("Terrain", container.NewVBox(
@@ -135,6 +275,14 @@ func main() {
 		lakeSizeLowerSlider,
 		lakeSizeUpperLabel,
 		lakeSizeUpperSlider,
+		minTreeSizeLabel,
+		minTreeSizeSlider,
+		maxTreeSizeLabel,
+		maxTreeSizeSlider,
+		treeCoverageLabel,
+		treeCoverageSlider,
+		treeClumpinessLabel,
+		treeClumpinessSlider,
 	))
 
 	imageTab := container.NewTabItem("Image", container.NewVBox(
@@ -142,7 +290,11 @@ func main() {
 		widthEntry,
 		widget.NewLabel("Height:"),
 		heightEntry,
+		widget.NewLabel("Seed:"),
+		seedEntry,
+		randomizeBtn,
 		generateBtn,
+		errorLabel,
 	))
 
 	tabs := container.NewAppTabs(

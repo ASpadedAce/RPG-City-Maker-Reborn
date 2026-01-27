@@ -7,7 +7,6 @@ import (
 	"image/draw"
 	"math"
 	"math/rand"
-	"time"
 
 	"github.com/aquilax/go-perlin"
 )
@@ -45,7 +44,7 @@ func (pq *priorityQueue) Pop() interface{} {
 }
 
 // GenerateLakes creates a specific number of lakes by dividing the image into chunks and placing one lake per chunk.
-func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, heightmap image.Image) (image.Image, []image.Point) {
+func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, heightmap image.Image, seed int64) (image.Image, []image.Point) {
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
@@ -54,7 +53,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	}
 
 	var allLakePixels []image.Point
-	randSrc := rand.New(rand.NewSource(time.Now().UnixNano()))
+	randSrc := rand.New(rand.NewSource(seed))
 
 	// 1. Divide the image into a grid
 	gridDim := int(math.Ceil(math.Sqrt(float64(numLakes))))
@@ -201,4 +200,105 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 	}
 
 	return composite
+}
+
+func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) {
+	width := img.Bounds().Dx()
+	height := img.Bounds().Dy()
+
+	// 1. Calculate number of trees to place from coverage %.
+	avgTreeSize := (minTreeSize + maxTreeSize) / 2
+	if avgTreeSize <= 0 {
+		return
+	}
+	avgRadius := avgTreeSize / 2
+	avgTreeArea := math.Pi * avgRadius * avgRadius
+	if avgTreeArea == 0 {
+		return
+	}
+	totalArea := float64(width * height)
+	targetTreePixels := totalArea * (treeCoverage / 100.0)
+	numTreesToPlace := int(targetTreePixels / avgTreeArea)
+
+	// 2. Generate a new noise map for tree placement.
+	treeNoise := perlin.NewPerlin(2, 2, 3, seed)
+	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
+	treeNoiseZoom := 0.05
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			val := treeNoise.Noise2D(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
+			val = (val + 1) / 2 // Normalize to 0-1
+			treeNoiseMap.SetGray(x, y, color.Gray{Y: uint8(val * 255)})
+		}
+	}
+	threshold := uint8(255 * (treeClumpiness / 100.0))
+
+	isLake := make(map[image.Point]bool)
+	for _, p := range lakePixels {
+		isLake[p] = true
+	}
+
+	treeCenters := make(map[image.Point]float64)
+	randSrc := rand.New(rand.NewSource(seed))
+
+	isValidCenter := func(p image.Point, r float64) bool {
+		if p.X-int(r) < 0 || p.X+int(r) >= width || p.Y-int(r) < 0 || p.Y+int(r) >= height {
+			return false
+		}
+		if isLake[p] {
+			return false
+		}
+		for center, r2 := range treeCenters {
+			dist := math.Sqrt(math.Pow(float64(p.X-center.X), 2) + math.Pow(float64(p.Y-center.Y), 2))
+			if dist < (r2+r)*0.75 { // Allow overlap
+				return false
+			}
+		}
+		return true
+	}
+
+	// 3. Place trees in valid locations.
+	maxConsecutiveFails := 10000
+	consecutiveFails := 0
+	for len(treeCenters) < numTreesToPlace && consecutiveFails < maxConsecutiveFails {
+		p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
+
+		// Check against noise map threshold
+		if treeNoiseMap.GrayAt(p.X, p.Y).Y < threshold {
+			consecutiveFails++
+			continue
+		}
+
+		size := minTreeSize + randSrc.Float64()*(maxTreeSize-minTreeSize)
+		if size <= 0 {
+			continue
+		}
+		radius := size / 2
+
+		if isValidCenter(p, radius) {
+			treeCenters[p] = radius
+			consecutiveFails = 0
+		} else {
+			consecutiveFails++
+		}
+	}
+
+	// 4. Draw the trees.
+	for p, r := range treeCenters {
+		// Use a simple pixel-by-pixel circle drawing method
+		for y := p.Y - int(r); y <= p.Y+int(r); y++ {
+			for x := p.X - int(r); x <= p.X+int(r); x++ {
+				pt := image.Point{X: x, Y: y}
+				if !pt.In(img.Bounds()) || isLake[pt] {
+					continue
+				}
+
+				if (math.Pow(float64(x-p.X), 2) + math.Pow(float64(y-p.Y), 2)) <= r*r {
+					// Blend the tree color with the background
+					// For simplicity, we just set a solid color for now.
+					img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
+				}
+			}
+		}
+	}
 }

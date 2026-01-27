@@ -4,8 +4,6 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"math/rand"
-	"time"
 
 	"github.com/aquilax/go-perlin"
 )
@@ -16,9 +14,13 @@ const (
 	n     = 3
 )
 
-func GenerateHeightmap(width, height, octaves int) image.Image {
-	p := perlin.NewPerlin(alpha, beta, n, rand.New(rand.NewSource(time.Now().UnixNano())).Int63())
+func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) image.Image {
+	p := perlin.NewPerlin(alpha, beta, n, seed)
 	img := image.NewGray(image.Rect(0, 0, width, height))
+
+	if scale == 0 {
+		scale = 100.0
+	}
 
 	for x := 0; x < width; x++ {
 		for y := 0; y < height; y++ {
@@ -28,7 +30,7 @@ func GenerateHeightmap(width, height, octaves int) image.Image {
 			maxAmplitude := 0.0
 
 			for i := 0; i < octaves; i++ {
-				noise += p.Noise2D(float64(x)*frequency/100, float64(y)*frequency/100) * amplitude
+				noise += p.Noise2D(float64(x)*frequency/scale, float64(y)*frequency/scale) * amplitude
 				maxAmplitude += amplitude
 				amplitude /= 2.0
 				frequency *= 2.0
