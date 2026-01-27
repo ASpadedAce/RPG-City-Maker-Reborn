@@ -21,7 +21,7 @@ func main() {
 	if err != nil {
 		log.Println("Error loading settings:", err)
 		// Use default settings if loading fails
-		settings = &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSize: 1}
+		settings = &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSizeLower: 1, LakeSizeUpper: 5}
 	}
 
 	w.SetOnClosed(func() {
@@ -40,7 +40,7 @@ func main() {
 
 	// Initial image generation
 	noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail))
-	canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSize)
+	canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg)
 	darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
 	compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 	heightmapImg.Image = compositeImg
@@ -70,13 +70,30 @@ func main() {
 	}
 	lakesSlider.SetValue(float64(settings.Lakes))
 
-	lakeSizeLabel := widget.NewLabel(fmt.Sprintf("Lake Size: %.0f%%", settings.LakeSize))
-	lakeSizeSlider := widget.NewSlider(1, 100)
-	lakeSizeSlider.OnChanged = func(val float64) {
-		settings.LakeSize = val
-		lakeSizeLabel.SetText(fmt.Sprintf("Lake Size: %.0f%%", settings.LakeSize))
+	lakeSizeLowerLabel := widget.NewLabel(fmt.Sprintf("Min Lake Size: %.0f%%", settings.LakeSizeLower))
+	lakeSizeLowerSlider := widget.NewSlider(1, 100)
+	lakeSizeUpperLabel := widget.NewLabel(fmt.Sprintf("Max Lake Size: %.0f%%", settings.LakeSizeUpper))
+	lakeSizeUpperSlider := widget.NewSlider(1, 100)
+
+	lakeSizeLowerSlider.OnChanged = func(val float64) {
+		settings.LakeSizeLower = val
+		if settings.LakeSizeLower > settings.LakeSizeUpper {
+			settings.LakeSizeUpper = settings.LakeSizeLower
+			lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
+		}
+		lakeSizeLowerLabel.SetText(fmt.Sprintf("Min Lake Size: %.0f%%", settings.LakeSizeLower))
 	}
-	lakeSizeSlider.SetValue(settings.LakeSize)
+	lakeSizeLowerSlider.SetValue(settings.LakeSizeLower)
+
+	lakeSizeUpperSlider.OnChanged = func(val float64) {
+		settings.LakeSizeUpper = val
+		if settings.LakeSizeUpper < settings.LakeSizeLower {
+			settings.LakeSizeLower = settings.LakeSizeUpper
+			lakeSizeLowerSlider.SetValue(settings.LakeSizeLower)
+		}
+		lakeSizeUpperLabel.SetText(fmt.Sprintf("Max Lake Size: %.0f%%", settings.LakeSizeUpper))
+	}
+	lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
 
 	widthEntry := widget.NewEntry()
 	widthEntry.SetText(strconv.Itoa(settings.Width))
@@ -98,7 +115,7 @@ func main() {
 
 	generateBtn := widget.NewButton("Generate", func() {
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail))
-		canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSize)
+		canvasWithLakes, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg)
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 		heightmapImg.Image = compositeImg
@@ -114,8 +131,10 @@ func main() {
 		roughnessSlider,
 		lakesLabel,
 		lakesSlider,
-		lakeSizeLabel,
-		lakeSizeSlider,
+		lakeSizeLowerLabel,
+		lakeSizeLowerSlider,
+		lakeSizeUpperLabel,
+		lakeSizeUpperSlider,
 	))
 
 	imageTab := container.NewTabItem("Image", container.NewVBox(

@@ -7,12 +7,13 @@ import (
 )
 
 type Settings struct {
-	Detail    float64 `json:"detail"`
-	Roughness float64 `json:"roughness"`
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
-	Lakes     int     `json:"lakes"`
-	LakeSize  float64 `json:"lake_size"`
+	Detail        float64 `json:"detail"`
+	Roughness     float64 `json:"roughness"`
+	Width         int     `json:"width"`
+	Height        int     `json:"height"`
+	Lakes         int     `json:"lakes"`
+	LakeSizeLower float64 `json:"lake_size_lower"`
+	LakeSizeUpper float64 `json:"lake_size_upper"`
 }
 
 func (s *Settings) Save() error {
@@ -47,7 +48,7 @@ func LoadSettings() (*Settings, error) {
 	file, err := os.Open(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSize: 1}, nil
+			return &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSizeLower: 1, LakeSizeUpper: 5}, nil
 		}
 		return nil, err
 	}
