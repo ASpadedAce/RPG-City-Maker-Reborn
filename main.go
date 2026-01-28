@@ -227,23 +227,23 @@ func main() {
 			lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
 			finalImage := lakeImage.(*image.RGBA)
 
-			// Step 3: Generating Trees
-			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
-			GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
-
-			// Step 4: Darkening Lake Areas
+			// Step 3: Darkening Lake Areas
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Lake Areas", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
 
-			// Step 5: Applying Roughness
+			// Step 4: Applying Roughness
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
 			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+
+			// Step 5: Generating Trees
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
 			// Step 6: Finalizing Images
 			currentStep++
