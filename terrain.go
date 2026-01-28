@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 
+	"github.com/disintegration/imaging"
 	"github.com/ojrac/opensimplex-go"
 )
 
@@ -176,28 +177,23 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 // DarkenLakeAreas applies a visual darkening effect to the heightmap where lakes exist.
 func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Image {
 	bounds := heightmap.Bounds()
+	width := bounds.Dx()
+
+	// Create a new black image to draw the lakes on
+	lakeMask := image.NewRGBA(bounds)
+	black := color.RGBA{0, 0, 0, 255}
+	for _, p := range lakePixels {
+		lakeMask.Set(p.X, p.Y, black)
+	}
+
+	// Apply a Gaussian blur to the lake mask
+	blurRadius := float64(width) * 0.05
+	blurredLakeMask := imaging.Blur(lakeMask, blurRadius)
+
+	// Composite the blurred lake mask onto the heightmap with 50% opacity
 	composite := image.NewRGBA(bounds)
 	draw.Draw(composite, bounds, heightmap, image.Point{}, draw.Src)
-
-	// Create a map for quick lookup of lake pixels
-	isLake := make(map[image.Point]bool)
-	for _, p := range lakePixels {
-		isLake[p] = true
-	}
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			if !isLake[image.Point{X: x, Y: y}] {
-				c := composite.At(x, y)
-				r, g, b, a := c.RGBA()
-				// Darken by 15%
-				r = uint32(float64(r) * 0.85)
-				g = uint32(float64(g) * 0.85)
-				b = uint32(float64(b) * 0.85)
-				composite.Set(x, y, color.RGBA64{R: uint16(r), G: uint16(g), B: uint16(b), A: uint16(a)})
-			}
-		}
-	}
+	draw.DrawMask(composite, bounds, blurredLakeMask, image.Point{}, image.NewUniform(color.Alpha{192}), image.Point{}, draw.Over)
 
 	return composite
 }
