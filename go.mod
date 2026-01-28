@@ -5,7 +5,6 @@ go 1.25.6
 require (
 	fyne.io/fyne/v2 v2.7.2
 	github.com/aquilax/go-perlin v1.1.0
-	github.com/disintegration/imaging v1.6.2
 	github.com/ojrac/opensimplex-go v1.0.2
 )
 
@@ -13,6 +12,7 @@ require (
 	fyne.io/systray v1.12.0 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect
