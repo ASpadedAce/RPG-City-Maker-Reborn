@@ -21,6 +21,7 @@ import (
 
 func main() {
 	a := app.New()
+	a.Settings().SetTheme(&CustomTheme{a.Settings().Theme()})
 	w := a.NewWindow("RPG City Maker")
 	w.Resize(fyne.NewSize(800, 600))
 
@@ -202,17 +203,59 @@ func main() {
 	errorLabel.TextSize = 12
 	errorLabel.Hide()
 
-	generateBtn := widget.NewButton("Generate", func() {
-		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
-		lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-		finalImage := lakeImage.(*image.RGBA)
-		GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
-		darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
-		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
-		heightmapImg.Image = compositeImg
-		heightmapImg.Refresh()
-		canvasImg.Image = finalImage
-		canvasImg.Refresh()
+	var generateBtn *widget.Button
+	progressBar := NewTextOverlayProgressBar()
+
+	generateBtn = widget.NewButton("Generate", func() {
+		go func() {
+			generateBtn.Disable()
+			defer generateBtn.Enable()
+
+			steps := 6
+			currentStep := 0
+
+			// Step 1: Generating Heightmap
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Heightmap", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+
+			// Step 2: Generating Lakes
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+			finalImage := lakeImage.(*image.RGBA)
+
+			// Step 3: Generating Trees
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+
+			// Step 4: Darkening Lake Areas
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Lake Areas", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
+
+			// Step 5: Applying Roughness
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+
+			// Step 6: Finalizing Images
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			heightmapImg.Image = compositeImg
+			heightmapImg.Refresh()
+			canvasImg.Image = finalImage
+			canvasImg.Refresh()
+
+			progressBar.SetText("Generation Complete!")
+		}()
 	})
 
 	widthEntry := widget.NewEntry()
@@ -295,6 +338,7 @@ func main() {
 		randomizeBtn,
 		generateBtn,
 		errorLabel,
+		progressBar,
 	))
 
 	tabs := container.NewAppTabs(

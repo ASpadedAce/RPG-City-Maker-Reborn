@@ -8,7 +8,7 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/aquilax/go-perlin"
+	"github.com/ojrac/opensimplex-go"
 )
 
 // lakePixel represents a potential pixel to be added to a lake during growth
@@ -76,7 +76,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	})
 
 	totalArea := float64(width * height)
-	p := perlin.NewPerlin(2.0, 2.0, 1, randSrc.Int63())
+	noiseGen := opensimplex.New(seed)
 
 	// 3. Generate a lake in a subset of the chunks
 	for i := 0; i < numLakes; i++ {
@@ -128,7 +128,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		getScore := func(pt image.Point) float64 {
 			dx, dy := pt.X-startPt.X, pt.Y-startPt.Y
 			dist := math.Sqrt(float64(dx*dx + dy*dy))
-			noise := p.Noise2D(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
+			noise := noiseGen.Eval2(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
 			distPenalty := math.Pow(dist/radius, 3.0)
 			luma, _, _, _ := heightmap.At(pt.X, pt.Y).RGBA()
 			heightmapVal := float64(luma) / 65535.0
@@ -219,72 +219,60 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 	totalArea := float64(width * height)
 	targetTreePixels := totalArea * (treeCoverage / 100.0)
 	numTreesToPlace := int(targetTreePixels / avgTreeArea)
+	if numTreesToPlace == 0 {
+		return
+	}
 
-	// 2. Generate a new noise map for tree placement.
-	treeNoise := perlin.NewPerlin(2, 2, 3, seed)
+	// 2. Generate a simplex noise map for tree placement.
+	noise := opensimplex.New(seed)
 	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
 	treeNoiseZoom := 0.05
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			val := treeNoise.Noise2D(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
+			val := noise.Eval2(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
 			val = (val + 1) / 2 // Normalize to 0-1
 			treeNoiseMap.SetGray(x, y, color.Gray{Y: uint8(val * 255)})
 		}
 	}
-	threshold := uint8(255 * (treeClumpiness / 100.0))
+	threshold := uint8(255 * (1 - (treeCoverage / 100.0)))
 
 	isLake := make(map[image.Point]bool)
 	for _, p := range lakePixels {
 		isLake[p] = true
 	}
 
-	treeCenters := make(map[image.Point]float64)
 	randSrc := rand.New(rand.NewSource(seed))
 
-	isValidCenter := func(p image.Point, r float64) bool {
-		if p.X-int(r) < 0 || p.X+int(r) >= width || p.Y-int(r) < 0 || p.Y+int(r) >= height {
-			return false
-		}
-		if isLake[p] {
-			return false
-		}
-		for center, r2 := range treeCenters {
-			dist := math.Sqrt(math.Pow(float64(p.X-center.X), 2) + math.Pow(float64(p.Y-center.Y), 2))
-			if dist < (r2+r)*0.75 { // Allow overlap
-				return false
-			}
-		}
-		return true
+	// 3. Determine initial clump trees
+	numClumpTrees := int(treeClumpiness)
+	if numClumpTrees > numTreesToPlace {
+		numClumpTrees = numTreesToPlace
 	}
 
-	// 3. Place trees in valid locations.
-	maxConsecutiveFails := 10000
-	consecutiveFails := 0
-	for len(treeCenters) < numTreesToPlace && consecutiveFails < maxConsecutiveFails {
-		p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
-
-		// Check against noise map threshold
-		if treeNoiseMap.GrayAt(p.X, p.Y).Y < threshold {
-			consecutiveFails++
-			continue
+	initialPoints := make([]image.Point, 0, numClumpTrees)
+	for i := 0; i < numClumpTrees; i++ {
+		for j := 0; j < 100; j++ { // try 100 times to find a valid spot
+			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
+			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] {
+				initialPoints = append(initialPoints, p)
+				break
+			}
 		}
+	}
 
+	// 4. Place remaining trees using Bridson's Algorithm
+	minRadius := minTreeSize
+	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
+		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p]
+	}, seed)
+
+	// 5. Draw the trees.
+	for _, p := range allPoints {
 		size := minTreeSize + randSrc.Float64()*(maxTreeSize-minTreeSize)
 		if size <= 0 {
 			continue
 		}
-		radius := size / 2
-
-		if isValidCenter(p, radius) {
-			treeCenters[p] = radius
-			consecutiveFails = 0
-		} else {
-			consecutiveFails++
-		}
-	}
-
-	// 4. Draw the trees.
-	for p, r := range treeCenters {
+		r := size / 2
 		// Use a simple pixel-by-pixel circle drawing method
 		for y := p.Y - int(r); y <= p.Y+int(r); y++ {
 			for x := p.X - int(r); x <= p.X+int(r); x++ {
@@ -301,4 +289,72 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 			}
 		}
 	}
+}
+
+func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoints []image.Point, isValid func(image.Point) bool, seed int64) []image.Point {
+	randSrc := rand.New(rand.NewSource(seed))
+	points := initialPoints
+	activeList := append([]image.Point(nil), initialPoints...)
+
+	cellSize := minRadius / math.Sqrt(2)
+	gridWidth := int(math.Ceil(float64(width)/cellSize)) + 1
+	gridHeight := int(math.Ceil(float64(height)/cellSize)) + 1
+	grid := make([][]image.Point, gridWidth)
+	for i := range grid {
+		grid[i] = make([]image.Point, gridHeight)
+	}
+
+	for _, p := range points {
+		gridX, gridY := int(float64(p.X)/cellSize), int(float64(p.Y)/cellSize)
+		grid[gridX][gridY] = p
+	}
+
+	for len(activeList) > 0 {
+		listIndex := randSrc.Intn(len(activeList))
+		p := activeList[listIndex]
+		found := false
+		for i := 0; i < k; i++ {
+			angle := randSrc.Float64() * 2 * math.Pi
+			radius := minRadius + randSrc.Float64()*minRadius
+			x, y := float64(p.X)+radius*math.Cos(angle), float64(p.Y)+radius*math.Sin(angle)
+			newPoint := image.Point{X: int(x), Y: int(y)}
+
+			if newPoint.X < 0 || newPoint.X >= width || newPoint.Y < 0 || newPoint.Y >= height {
+				continue
+			}
+
+			if !isValid(newPoint) {
+				continue
+			}
+
+			gridX, gridY := int(x/cellSize), int(y/cellSize)
+			valid := true
+			for m := -1; m <= 1; m++ {
+				for n := -1; n <= 1; n++ {
+					checkX, checkY := gridX+m, gridY+n
+					if checkX >= 0 && checkX < gridWidth && checkY >= 0 && checkY < gridHeight && grid[checkX][checkY] != (image.Point{}) {
+						dist := math.Sqrt(math.Pow(float64(grid[checkX][checkY].X-newPoint.X), 2) + math.Pow(float64(grid[checkX][checkY].Y-newPoint.Y), 2))
+						if dist < minRadius {
+							valid = false
+							break
+						}
+					}
+				}
+				if !valid {
+					break
+				}
+			}
+
+			if valid {
+				points = append(points, newPoint)
+				activeList = append(activeList, newPoint)
+				grid[gridX][gridY] = newPoint
+				found = true
+			}
+		}
+		if !found {
+			activeList = append(activeList[:listIndex], activeList[listIndex+1:]...)
+		}
+	}
+	return points
 }
