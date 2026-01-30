@@ -433,7 +433,7 @@ func bresenham(path []image.Point) []image.Point {
 func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image) {
 	bounds := img.Bounds()
 	r2 := radius * radius
-	innerRadius := radius * 0.75 // The inner 75% of the river is smooth
+	innerRadius := radius * 0.875 // The inner 75% of the river is smooth
 	innerR2 := innerRadius * innerRadius
 
 	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
