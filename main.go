@@ -100,10 +100,16 @@ func main() {
 	if canvasImg.Image == nil || heightmapImg.Image == nil {
 		// Initial image generation
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
-		lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakePixels, settings.Seed)
+		lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed)
 		finalImage := riverImage.(*image.RGBA)
-		allWaterPixels := append(lakePixels, riverPixels...)
+
+		var flatLakePixels []image.Point
+		for _, lake := range lakes {
+			flatLakePixels = append(flatLakePixels, lake...)
+		}
+		allWaterPixels := append(flatLakePixels, riverPixels...)
+
 		GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
@@ -267,16 +273,20 @@ func main() {
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
-			lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+			lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
 
 			// Step 3: Generating Rivers
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
-			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakePixels, settings.Seed)
+			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed)
 
 			finalImage := riverImage.(*image.RGBA)
-			allWaterPixels := append(lakePixels, riverPixels...)
+			var flatLakePixels []image.Point
+			for _, lake := range lakes {
+				flatLakePixels = append(flatLakePixels, lake...)
+			}
+			allWaterPixels := append(flatLakePixels, riverPixels...)
 
 			// Step 4: Darkening Water Areas
 			currentStep++

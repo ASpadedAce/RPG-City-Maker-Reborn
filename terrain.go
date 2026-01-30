@@ -45,8 +45,7 @@ func (pq *priorityQueue) Pop() interface{} {
 	return item
 }
 
-// GenerateLakes creates a specific number of lakes by dividing the image into chunks and placing one lake per chunk.
-func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, heightmap image.Image, seed int64) (image.Image, []image.Point) {
+func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, heightmap image.Image, seed int64) (image.Image, [][]image.Point) {
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
@@ -54,7 +53,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		return canvas, nil
 	}
 
-	var allLakePixels []image.Point
+	var allLakes [][]image.Point
 	randSrc := rand.New(rand.NewSource(seed))
 
 	// 1. Divide the image into a grid
@@ -85,6 +84,8 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		if i >= len(chunkIndices) {
 			break
 		}
+
+		var currentLake []image.Point
 
 		// Each lake gets a random size within the defined range
 		lakeSize := lakeSizeLower
@@ -147,7 +148,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 
 			// The pixel is valid, claim it.
 			canvas.Set(current.point.X, current.point.Y, color.RGBA{R: 0, G: 0, B: 255, A: 255})
-			allLakePixels = append(allLakePixels, current.point)
+			currentLake = append(currentLake, current.point)
 			lakeCount++
 
 			// Add neighbors, constrained to the chunk rectangle
@@ -170,9 +171,12 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 				}
 			}
 		}
+		if len(currentLake) > 0 {
+			allLakes = append(allLakes, currentLake)
+		}
 	}
 
-	return canvas, allLakePixels
+	return canvas, allLakes
 }
 
 type River struct {
@@ -181,7 +185,7 @@ type River struct {
 	Points     []image.Point
 }
 
-func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakePixels []image.Point, seed int64) (image.Image, []image.Point) {
+func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64) (image.Image, []image.Point) {
 	if numRivers == 0 {
 		return inputImage, nil
 	}
@@ -197,8 +201,12 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 	avgDim := float64(width+height) / 2.0
 
 	isWater := make(map[image.Point]bool)
-	for _, p := range lakePixels {
-		isWater[p] = true
+	lakePixelMap := make(map[image.Point]int)
+	for i, lake := range lakes {
+		for _, p := range lake {
+			isWater[p] = true
+			lakePixelMap[p] = i
+		}
 	}
 
 	rivers := make([]River, numRivers)
@@ -232,7 +240,14 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 
 		for _, p := range path {
 			if isWater[p] {
-				r.End = p
+				if lakeIndex, isLake := lakePixelMap[p]; isLake {
+					// Intersection is with a lake, find its center
+					lakeCenter := findCenter(lakes[lakeIndex])
+					r.End = lakeCenter
+				} else {
+					// Intersection is with another river
+					r.End = p
+				}
 				path = calculatePath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
 				break
 			}
@@ -242,12 +257,28 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		radius := riverWidthPx / 2.0
 
 		for _, p := range path {
+			// When drawing river pixels, add them to isWater to detect river-river intersections
 			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater)
 		}
 		r.Points = path
 	}
 
 	return canvas, allRiverPixels
+}
+
+func findCenter(pixels []image.Point) image.Point {
+	if len(pixels) == 0 {
+		return image.Point{}
+	}
+	var sumX, sumY int
+	for _, p := range pixels {
+		sumX += p.X
+		sumY += p.Y
+	}
+	return image.Point{
+		X: sumX / len(pixels),
+		Y: sumY / len(pixels),
+	}
 }
 
 func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
