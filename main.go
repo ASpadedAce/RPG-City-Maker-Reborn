@@ -101,7 +101,7 @@ func main() {
 		// Initial image generation
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
 		lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed)
+		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 		finalImage := riverImage.(*image.RGBA)
 
 		var flatLakePixels []image.Point
@@ -279,7 +279,7 @@ func main() {
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
-			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed)
+			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 
 			finalImage := riverImage.(*image.RGBA)
 			var flatLakePixels []image.Point

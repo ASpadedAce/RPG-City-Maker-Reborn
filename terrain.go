@@ -185,7 +185,7 @@ type River struct {
 	Points     []image.Point
 }
 
-func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64) (image.Image, []image.Point) {
+func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image) (image.Image, []image.Point) {
 	if numRivers == 0 {
 		return inputImage, nil
 	}
@@ -258,7 +258,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 
 		for _, p := range path {
 			// When drawing river pixels, add them to isWater to detect river-river intersections
-			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater)
+			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater, heightmap)
 		}
 		r.Points = path
 	}
@@ -430,9 +430,12 @@ func bresenham(path []image.Point) []image.Point {
 	return fullPath
 }
 
-func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool) {
+func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image) {
 	bounds := img.Bounds()
 	r2 := radius * radius
+	innerRadius := radius * 0.75 // The inner 75% of the river is smooth
+	innerR2 := innerRadius * innerRadius
+
 	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
 		for x := int(math.Floor(float64(center.X) - radius)); x <= int(math.Ceil(float64(center.X)+radius)); x++ {
 			p := image.Point{X: x, Y: y}
@@ -441,8 +444,21 @@ func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Col
 			}
 
 			dx, dy := float64(x-center.X), float64(y-center.Y)
-			if dx*dx+dy*dy <= r2 {
+			dist2 := dx*dx + dy*dy
+
+			if dist2 <= r2 {
 				if !isWater[p] {
+					// Roughen the outer 15% of the river
+					if dist2 > innerR2 {
+						luma, _, _, _ := heightmap.At(x, y).RGBA()
+						// Normalize luma to 0-1 range
+						heightmapVal := float64(luma) / 65535.0
+						// Roughen the edges based on the heightmap
+						if heightmapVal < 0.5 {
+							continue
+						}
+					}
+
 					img.Set(x, y, c)
 					*pixels = append(*pixels, p)
 					isWater[p] = true
