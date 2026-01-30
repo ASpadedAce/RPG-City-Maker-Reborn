@@ -20,6 +20,10 @@ type Settings struct {
 	TreeCoverage   float64 `json:"tree_coverage"`
 	TreeClumpiness float64 `json:"tree_clumpiness"`
 	Seed           int64   `json:"seed"`
+	Rivers         int     `json:"rivers"`
+	MinRiverWidth  float64 `json:"min_river_width"`
+	MaxRiverWidth  float64 `json:"max_river_width"`
+	RiverCurvyness float64 `json:"river_curvyness"`
 }
 
 func (s *Settings) Save() error {
@@ -67,6 +71,10 @@ func LoadSettings() (*Settings, error) {
 				TreeCoverage:   20,
 				TreeClumpiness: 50,
 				Seed:           time.Now().UnixNano(),
+				Rivers:         0,
+				MinRiverWidth:  1,
+				MaxRiverWidth:  5,
+				RiverCurvyness: 50,
 			}, nil
 		}
 		return nil, err

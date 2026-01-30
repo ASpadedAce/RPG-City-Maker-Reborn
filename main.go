@@ -101,9 +101,11 @@ func main() {
 		// Initial image generation
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
 		lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-		finalImage := lakeImage.(*image.RGBA)
-		GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
-		darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
+		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakePixels, settings.Seed)
+		finalImage := riverImage.(*image.RGBA)
+		allWaterPixels := append(lakePixels, riverPixels...)
+		GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 		heightmapImg.Image = compositeImg
 		canvasImg.Image = finalImage
@@ -158,6 +160,47 @@ func main() {
 	}
 	lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
 
+	riversLabel := widget.NewLabel(fmt.Sprintf("Rivers: %d", settings.Rivers))
+	riversSlider := widget.NewSlider(0, 5)
+	riversSlider.OnChanged = func(val float64) {
+		settings.Rivers = int(val)
+		riversLabel.SetText(fmt.Sprintf("Rivers: %d", settings.Rivers))
+	}
+	riversSlider.SetValue(float64(settings.Rivers))
+
+	minRiverWidthLabel := widget.NewLabel(fmt.Sprintf("Min River Width: %.0f%%", settings.MinRiverWidth))
+	minRiverWidthSlider := widget.NewSlider(1, 100)
+	maxRiverWidthLabel := widget.NewLabel(fmt.Sprintf("Max River Width: %.0f%%", settings.MaxRiverWidth))
+	maxRiverWidthSlider := widget.NewSlider(1, 100)
+
+	minRiverWidthSlider.OnChanged = func(val float64) {
+		settings.MinRiverWidth = val
+		if settings.MinRiverWidth > settings.MaxRiverWidth {
+			settings.MaxRiverWidth = settings.MinRiverWidth
+			maxRiverWidthSlider.SetValue(settings.MaxRiverWidth)
+		}
+		minRiverWidthLabel.SetText(fmt.Sprintf("Min River Width: %.0f%%", settings.MinRiverWidth))
+	}
+	minRiverWidthSlider.SetValue(settings.MinRiverWidth)
+
+	maxRiverWidthSlider.OnChanged = func(val float64) {
+		settings.MaxRiverWidth = val
+		if settings.MaxRiverWidth < settings.MinRiverWidth {
+			settings.MinRiverWidth = settings.MaxRiverWidth
+			minRiverWidthSlider.SetValue(settings.MinRiverWidth)
+		}
+		maxRiverWidthLabel.SetText(fmt.Sprintf("Max River Width: %.0f%%", settings.MaxRiverWidth))
+	}
+	maxRiverWidthSlider.SetValue(settings.MaxRiverWidth)
+
+	riverCurvynessLabel := widget.NewLabel(fmt.Sprintf("River Curvyness: %.0f%%", settings.RiverCurvyness))
+	riverCurvynessSlider := widget.NewSlider(0, 100)
+	riverCurvynessSlider.OnChanged = func(val float64) {
+		settings.RiverCurvyness = val
+		riverCurvynessLabel.SetText(fmt.Sprintf("River Curvyness: %.0f%%", settings.RiverCurvyness))
+	}
+	riverCurvynessSlider.SetValue(settings.RiverCurvyness)
+
 	minTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
 	minTreeSizeSlider := widget.NewSlider(1, 150)
 	maxTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
@@ -211,7 +254,7 @@ func main() {
 			generateBtn.Disable()
 			defer generateBtn.Enable()
 
-			steps := 6
+			steps := 7
 			currentStep := 0
 
 			// Step 1: Generating Heightmap
@@ -225,27 +268,35 @@ func main() {
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
 			lakeImage, lakePixels := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-			finalImage := lakeImage.(*image.RGBA)
 
-			// Step 3: Darkening Lake Areas
+			// Step 3: Generating Rivers
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Lake Areas", currentStep, steps))
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
-			darkenedHeightmap := DarkenLakeAreas(noiseImg, lakePixels)
+			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakePixels, settings.Seed)
 
-			// Step 4: Applying Roughness
+			finalImage := riverImage.(*image.RGBA)
+			allWaterPixels := append(lakePixels, riverPixels...)
+
+			// Step 4: Darkening Water Areas
+			currentStep++
+			progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
+			progressBar.SetValue(float64(currentStep) / float64(steps))
+			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
+
+			// Step 5: Applying Roughness
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
 			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 
-			// Step 5: Generating Trees
+			// Step 6: Generating Trees
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
-			GenerateTrees(finalImage, lakePixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+			GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
-			// Step 6: Finalizing Images
+			// Step 7: Finalizing Images
 			currentStep++
 			progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
 			progressBar.SetValue(float64(currentStep) / float64(steps))
@@ -318,6 +369,20 @@ func main() {
 		lakeSizeLowerSlider,
 		lakeSizeUpperLabel,
 		lakeSizeUpperSlider,
+
+		widget.NewLabel(""), // Spacer
+
+		riversLabel,
+		riversSlider,
+		minRiverWidthLabel,
+		minRiverWidthSlider,
+		maxRiverWidthLabel,
+		maxRiverWidthSlider,
+		riverCurvynessLabel,
+		riverCurvynessSlider,
+
+		widget.NewLabel(""), // Spacer
+
 		minTreeSizeLabel,
 		minTreeSizeSlider,
 		maxTreeSizeLabel,

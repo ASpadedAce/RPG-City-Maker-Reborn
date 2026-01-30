@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"math"
 	"math/rand"
+	"sort"
 
 	"github.com/disintegration/imaging"
 	"github.com/ojrac/opensimplex-go"
@@ -172,6 +173,252 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	}
 
 	return canvas, allLakePixels
+}
+
+type River struct {
+	Width      float64
+	Start, End image.Point
+	Points     []image.Point
+}
+
+func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakePixels []image.Point, seed int64) (image.Image, []image.Point) {
+	if numRivers == 0 {
+		return inputImage, nil
+	}
+
+	canvas, ok := inputImage.(*image.RGBA)
+	if !ok {
+		canvas = image.NewRGBA(inputImage.Bounds())
+		draw.Draw(canvas, canvas.Bounds(), inputImage, image.Point{}, draw.Src)
+	}
+
+	var allRiverPixels []image.Point
+	randSrc := rand.New(rand.NewSource(seed))
+	avgDim := float64(width+height) / 2.0
+
+	isWater := make(map[image.Point]bool)
+	for _, p := range lakePixels {
+		isWater[p] = true
+	}
+
+	rivers := make([]River, numRivers)
+	for i := 0; i < numRivers; i++ {
+		widthPercent := float64(i) / float64(numRivers-1)
+		if numRivers == 1 {
+			widthPercent = 0.5
+		}
+		rivers[i].Width = maxWidth - widthPercent*(maxWidth-minWidth)
+	}
+
+	sort.Slice(rivers, func(i, j int) bool {
+		return rivers[i].Width > rivers[j].Width
+	})
+
+	numControlPoints := int(avgDim * 0.03)
+	if numControlPoints < 60 {
+		numControlPoints = 60
+	}
+
+	for i := range rivers {
+		r := &rivers[i]
+
+		startEdge := randSrc.Intn(4)
+		endEdge := (startEdge + randSrc.Intn(3) + 1) % 4
+
+		r.Start = getPointOnEdge(width, height, startEdge, randSrc)
+		r.End = getPointOnEdge(width, height, endEdge, randSrc)
+
+		path := calculatePath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
+
+		for _, p := range path {
+			if isWater[p] {
+				r.End = p
+				path = calculatePath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
+				break
+			}
+		}
+
+		riverWidthPx := (r.Width / 100.0) * avgDim
+		radius := riverWidthPx / 2.0
+
+		for _, p := range path {
+			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater)
+		}
+		r.Points = path
+	}
+
+	return canvas, allRiverPixels
+}
+
+func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
+	switch edge {
+	case 0: // Top
+		return image.Point{X: randSrc.Intn(width), Y: 0}
+	case 1: // Right
+		return image.Point{X: width - 1, Y: randSrc.Intn(height)}
+	case 2: // Bottom
+		return image.Point{X: randSrc.Intn(width), Y: height - 1}
+	default: // Left
+		return image.Point{X: 0, Y: randSrc.Intn(height)}
+	}
+}
+
+func calculatePath(start, end image.Point, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int) []image.Point {
+
+	dx := end.X - start.X
+
+	dy := end.Y - start.Y
+
+	dist := math.Sqrt(float64(dx*dx + dy*dy))
+
+	if dist == 0 {
+
+		return []image.Point{start}
+
+	}
+
+	if curvyness == 0 {
+
+		return bresenham([]image.Point{start, end})
+
+	}
+
+	type wave struct {
+		amplitude float64
+
+		numWaves float64
+
+		phase float64
+	}
+
+	waves := make([]wave, 3)
+
+	amp := (avgDim / 10.0) * curvyness
+
+	mainWavelength := avgDim / 4.0
+
+	if mainWavelength < 1 {
+
+		mainWavelength = 1
+
+	}
+
+	baseNumWaves := (dist / mainWavelength) * curvyness
+
+	for i := 0; i < 3; i++ {
+
+		freqMultiplier := 1.0 + float64(i)
+
+		randomizedNumWaves := baseNumWaves * freqMultiplier * (0.75 + randSrc.Float64()*0.5)
+
+		waves[i] = wave{
+
+			amplitude: amp,
+
+			numWaves: randomizedNumWaves,
+
+			phase: randSrc.Float64() * 2 * math.Pi,
+		}
+
+		amp /= 3
+
+	}
+
+	controlPoints := make([]image.Point, numControlPoints+1)
+
+	for i := 0; i <= numControlPoints; i++ {
+
+		t := float64(i) / float64(numControlPoints)
+
+		x := float64(start.X) + t*float64(dx)
+
+		y := float64(start.Y) + t*float64(dy)
+
+		perpX, perpY := -float64(dy)/dist, float64(dx)/dist
+
+		totalOffset := 0.0
+
+		for _, w := range waves {
+
+			totalOffset += math.Sin(t*w.numWaves*2*math.Pi+w.phase) * w.amplitude
+
+		}
+
+		// Apply an envelope to ensure start/end points are anchored
+
+		totalOffset *= math.Sin(t * math.Pi)
+
+		x += totalOffset * perpX
+
+		y += totalOffset * perpY
+
+		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
+
+	}
+
+	return bresenham(controlPoints)
+
+}
+
+func bresenham(path []image.Point) []image.Point {
+	if len(path) < 2 {
+		return path
+	}
+
+	var fullPath []image.Point
+	for i := 0; i < len(path)-1; i++ {
+		p1, p2 := path[i], path[i+1]
+		dx, dy := p2.X-p1.X, p2.Y-p1.Y
+		absDx, absDy := int(math.Abs(float64(dx))), int(math.Abs(float64(dy)))
+		sx, sy := 1, 1
+		if dx < 0 {
+			sx = -1
+		}
+		if dy < 0 {
+			sy = -1
+		}
+		err := absDx - absDy
+
+		x, y := p1.X, p1.Y
+		for {
+			fullPath = append(fullPath, image.Point{X: x, Y: y})
+			if x == p2.X && y == p2.Y {
+				break
+			}
+			e2 := 2 * err
+			if e2 > -absDy {
+				err -= absDy
+				x += sx
+			}
+			if e2 < absDx {
+				err += absDx
+				y += sy
+			}
+		}
+	}
+	return fullPath
+}
+
+func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool) {
+	bounds := img.Bounds()
+	r2 := radius * radius
+	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
+		for x := int(math.Floor(float64(center.X) - radius)); x <= int(math.Ceil(float64(center.X)+radius)); x++ {
+			p := image.Point{X: x, Y: y}
+			if !p.In(bounds) {
+				continue
+			}
+
+			dx, dy := float64(x-center.X), float64(y-center.Y)
+			if dx*dx+dy*dy <= r2 {
+				if !isWater[p] {
+					img.Set(x, y, c)
+					*pixels = append(*pixels, p)
+					isWater[p] = true
+				}
+			}
+		}
+	}
 }
 
 // DarkenLakeAreas applies a visual darkening effect to the heightmap where lakes exist.
