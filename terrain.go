@@ -85,25 +85,25 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 	return composite
 }
 
-func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) {
+func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
 
 	// 1. Calculate number of trees to place from coverage %.
 	avgTreeSize := (minTreeSize + maxTreeSize) / 2
 	if avgTreeSize <= 0 {
-		return
+		return nil
 	}
 	avgRadius := avgTreeSize / 2
 	avgTreeArea := math.Pi * avgRadius * avgRadius
 	if avgTreeArea == 0 {
-		return
+		return nil
 	}
 	totalArea := float64(width * height)
 	targetTreePixels := totalArea * (treeCoverage / 100.0)
 	numTreesToPlace := int(targetTreePixels / avgTreeArea)
 	if numTreesToPlace == 0 {
-		return
+		return nil
 	}
 
 	// 2. Generate a simplex noise map for tree placement.
@@ -146,6 +146,7 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p]
 	}, seed)
 
+	var treePixels []image.Point
 	// 5. Draw the trees.
 	for _, p := range allPoints {
 		size := minTreeSize + randSrc.Float64()*(maxTreeSize-minTreeSize)
@@ -165,10 +166,12 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 					// Blend the tree color with the background
 					// For simplicity, we just set a solid color for now.
 					img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
+					treePixels = append(treePixels, pt)
 				}
 			}
 		}
 	}
+	return treePixels
 }
 
 func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoints []image.Point, isValid func(image.Point) bool, seed int64) []image.Point {

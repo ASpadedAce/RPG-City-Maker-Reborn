@@ -1,19 +1,21 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"image"
 	"image/color"
-	"log"
-	"strconv"
-	"time"
-
+	"image/jpeg"
 	"image/png"
+	"log"
 	"os"
 	"path/filepath"
-
-	"image/jpeg"
+	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -46,15 +48,17 @@ func main() {
 		FillMode: canvas.ImageFillContain,
 	}
 
+	var lakes [][]image.Point
+	var riverPixels []image.Point
+	var treePixels []image.Point
+
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatal("Failed to get user config dir:", err)
 	}
 	appConfigDir := filepath.Join(configDir, "rpgcitymakerreborn")
-
 	canvasPath := filepath.Join(appConfigDir, "canvas.png")
 	heightmapPath := filepath.Join(appConfigDir, "heightmap.png")
-
 	w.SetOnClosed(func() {
 		if err := settings.Save(); err != nil {
 			log.Println("Error saving settings:", err)
@@ -84,7 +88,6 @@ func main() {
 			}
 		}
 	})
-
 	canvasFile, err := os.Open(canvasPath)
 	if err == nil {
 		defer canvasFile.Close()
@@ -106,8 +109,10 @@ func main() {
 	if canvasImg.Image == nil || heightmapImg.Image == nil {
 		// Initial image generation
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
-		lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
-		riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
+		var lakeImage image.Image
+		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+		var riverImage image.Image
+		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 		finalImage := riverImage.(*image.RGBA)
 
 		var flatLakePixels []image.Point
@@ -116,7 +121,7 @@ func main() {
 		}
 		allWaterPixels := append(flatLakePixels, riverPixels...)
 
-		GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+		treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 		heightmapImg.Image = compositeImg
@@ -266,6 +271,9 @@ func main() {
 	exportHeightmapBtn := widget.NewButton("Export Heightmap", func() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
+	exportMasksBtn := widget.NewButton("Export Masks", func() {
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels)
+	})
 
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
@@ -295,7 +303,8 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+			var lakeImage image.Image
+			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
 
 			// Step 3: Generating Rivers
 			currentStep++
@@ -303,7 +312,8 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
+			var riverImage image.Image
+			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 
 			finalImage := riverImage.(*image.RGBA)
 			var flatLakePixels []image.Point
@@ -334,7 +344,7 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+			treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
 			// Step 7: Finalizing Images
 			currentStep++
@@ -452,6 +462,7 @@ func main() {
 		widget.NewSeparator(),
 		exportCanvasBtn,
 		exportHeightmapBtn,
+		exportMasksBtn,
 	))
 
 	tabs := container.NewAppTabs(
@@ -478,6 +489,209 @@ func main() {
 
 	w.SetContent(split)
 	w.ShowAndRun()
+}
+func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
+	buf := new(bytes.Buffer)
+	var err error
+	switch format {
+	case "PNG":
+		err = png.Encode(buf, img)
+	case "JPG":
+		err = jpeg.Encode(buf, img, nil)
+	case "WEBP":
+		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
+	}
+	return buf, err
+}
+
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels []image.Point) {
+	fileNameEntry := widget.NewEntry()
+	fileNameEntry.SetPlaceHolder("masks_folder")
+
+	formatSelect := widget.NewSelect([]string{"PNG", "JPG", "WEBP"}, nil)
+	formatSelect.SetSelected("PNG")
+
+	packageSelect := widget.NewSelect([]string{"Folder", "tar.gz", "zip"}, nil)
+	packageSelect.SetSelected("Folder")
+
+	pathLabel := widget.NewLabel(settings.LastExportPath)
+
+	browseBtn := widget.NewButton("Browse", func() {
+		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				log.Println("Error opening folder dialog:", err)
+				return
+			}
+			if uri == nil {
+				return
+			}
+			settings.LastExportPath = uri.Path()
+			pathLabel.SetText(settings.LastExportPath)
+		}, win)
+	})
+
+	content := container.NewVBox(
+		widget.NewLabel("Save to:"),
+		container.NewBorder(nil, nil, nil, browseBtn, pathLabel),
+		widget.NewLabel("Folder Name:"),
+		fileNameEntry,
+		widget.NewLabel("Format:"),
+		formatSelect,
+		widget.NewLabel("Packaging:"),
+		packageSelect,
+	)
+
+	saveDialog := dialog.NewCustom("Export Masks", "Cancel", content, win)
+
+	saveBtn := widget.NewButton("Save", func() {
+		folderName := fileNameEntry.Text
+		if folderName == "" {
+			return
+		}
+		imgFormat := strings.ToLower(formatSelect.Selected)
+		bounds := canvasImg.Bounds()
+
+		// Create mask images
+		lakeMask := image.NewGray(bounds)
+		for _, lake := range lakes {
+			for _, p := range lake {
+				lakeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+			}
+		}
+		riverMask := image.NewGray(bounds)
+		for _, p := range riverPixels {
+			riverMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		}
+		treeMask := image.NewGray(bounds)
+		for _, p := range treePixels {
+			treeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		}
+
+		imagesToSave := map[string]image.Image{
+			"canvas." + imgFormat:      canvasImg,
+			"heightmap." + imgFormat:   heightmapImg,
+			"lakes_mask." + imgFormat:  lakeMask,
+			"rivers_mask." + imgFormat: riverMask,
+			"trees_mask." + imgFormat:  treeMask,
+		}
+
+		switch packageSelect.Selected {
+		case "Folder":
+			exportPath := filepath.Join(pathLabel.Text, folderName)
+			if err := os.MkdirAll(exportPath, 0755); err != nil {
+				log.Println("Error creating directory:", err)
+				return
+			}
+			settings.LastExportPath = exportPath
+			for name, img := range imagesToSave {
+				saveImage(img, filepath.Join(exportPath, name))
+			}
+		case "tar.gz":
+			filePath := filepath.Join(pathLabel.Text, folderName+".tar.gz")
+			settings.LastExportPath = filepath.Dir(filePath)
+			file, err := os.Create(filePath)
+			if err != nil {
+				log.Println("Error creating archive:", err)
+				return
+			}
+			defer file.Close()
+
+			gw := gzip.NewWriter(file)
+			defer gw.Close()
+			tw := tar.NewWriter(gw)
+			defer tw.Close()
+
+			for name, img := range imagesToSave {
+				buf, err := getImageData(img, formatSelect.Selected)
+				if err != nil {
+					log.Printf("Error encoding image %s: %v\n", name, err)
+					continue
+				}
+				hdr := &tar.Header{
+					Name: name,
+					Mode: 0644,
+					Size: int64(buf.Len()),
+				}
+				if err := tw.WriteHeader(hdr); err != nil {
+					log.Printf("Error writing tar header for %s: %v\n", name, err)
+					continue
+				}
+				if _, err := tw.Write(buf.Bytes()); err != nil {
+					log.Printf("Error writing tar data for %s: %v\n", name, err)
+				}
+			}
+		case "zip":
+			filePath := filepath.Join(pathLabel.Text, folderName+".zip")
+			settings.LastExportPath = filepath.Dir(filePath)
+			file, err := os.Create(filePath)
+			if err != nil {
+				log.Println("Error creating archive:", err)
+				return
+			}
+			defer file.Close()
+
+			zw := zip.NewWriter(file)
+			defer zw.Close()
+
+			for name, img := range imagesToSave {
+				buf, err := getImageData(img, formatSelect.Selected)
+				if err != nil {
+					log.Printf("Error encoding image %s: %v\n", name, err)
+					continue
+				}
+				f, err := zw.Create(name)
+				if err != nil {
+					log.Printf("Error creating zip entry for %s: %v\n", name, err)
+					continue
+				}
+				if _, err := f.Write(buf.Bytes()); err != nil {
+					log.Printf("Error writing zip data for %s: %v\n", name, err)
+				}
+			}
+		}
+
+		saveDialog.Hide()
+	})
+	saveBtn.Disable()
+
+	fileNameEntry.OnChanged = func(text string) {
+		if text == "" {
+			saveBtn.Disable()
+		} else {
+			saveBtn.Enable()
+		}
+	}
+
+	saveDialog.SetButtons([]fyne.CanvasObject{
+		widget.NewButton("Cancel", func() {
+			saveDialog.Hide()
+		}),
+		saveBtn,
+	})
+
+	saveDialog.Show()
+}
+
+func saveImage(img image.Image, path string) {
+	file, err := os.Create(path)
+	if err != nil {
+		log.Println("Error creating file:", err)
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".png":
+		err = png.Encode(file, img)
+	case ".jpg":
+		err = jpeg.Encode(file, img, nil)
+	case ".webp":
+		err = webp.Encode(file, img, &webp.Options{Lossless: true})
+	}
+	if err != nil {
+		log.Println("Failed to encode image:", err)
+	}
 }
 
 func showSaveDialog(win fyne.Window, img image.Image, settings *Settings) {
@@ -522,25 +736,7 @@ func showSaveDialog(win fyne.Window, img image.Image, settings *Settings) {
 
 		filePath := filepath.Join(pathLabel.Text, fileName+"."+strings.ToLower(formatSelect.Selected))
 		settings.LastExportPath = filepath.Dir(filePath)
-
-		file, err := os.Create(filePath)
-		if err != nil {
-			log.Println("Error creating file:", err)
-			return
-		}
-		defer file.Close()
-
-		switch formatSelect.Selected {
-		case "PNG":
-			err = png.Encode(file, img)
-		case "JPG":
-			err = jpeg.Encode(file, img, nil)
-		case "WEBP":
-			err = webp.Encode(file, img, &webp.Options{Lossless: true})
-		}
-		if err != nil {
-			log.Println("Failed to encode image:", err)
-		}
+		saveImage(img, filePath)
 		saveDialog.Hide()
 	})
 	saveBtn.Disable()
