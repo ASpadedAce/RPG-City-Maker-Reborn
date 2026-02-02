@@ -260,8 +260,11 @@ func main() {
 
 	var generateBtn *widget.Button
 	progressBar := NewTextOverlayProgressBar()
-	exportBtn := widget.NewButton("Export", func() {
+	exportCanvasBtn := widget.NewButton("Export Canvas", func() {
 		showSaveDialog(w, canvasImg.Image, settings)
+	})
+	exportHeightmapBtn := widget.NewButton("Export Heightmap", func() {
+		showSaveDialog(w, heightmapImg.Image, settings)
 	})
 
 	generateBtn = widget.NewButton("Generate", func() {
@@ -447,7 +450,8 @@ func main() {
 		errorLabel,
 		progressBar,
 		widget.NewSeparator(),
-		exportBtn,
+		exportCanvasBtn,
+		exportHeightmapBtn,
 	))
 
 	tabs := container.NewAppTabs(
