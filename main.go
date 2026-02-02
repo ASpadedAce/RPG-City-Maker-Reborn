@@ -257,28 +257,40 @@ func main() {
 
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
-			generateBtn.Disable()
-			defer generateBtn.Enable()
+			fyne.Do(func() {
+				generateBtn.Disable()
+			})
+			defer func() {
+				fyne.Do(func() {
+					generateBtn.Enable()
+				})
+			}()
 
 			steps := 7
 			currentStep := 0
 
 			// Step 1: Generating Heightmap
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Heightmap", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Heightmap", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
 
 			// Step 2: Generating Lakes
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			lakeImage, lakes := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
 
 			// Step 3: Generating Rivers
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			riverImage, riverPixels := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 
 			finalImage := riverImage.(*image.RGBA)
@@ -290,32 +302,40 @@ func main() {
 
 			// Step 4: Darkening Water Areas
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
 			// Step 5: Applying Roughness
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 
 			// Step 6: Generating Trees
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
 			GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
 			// Step 7: Finalizing Images
 			currentStep++
-			progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
-			progressBar.SetValue(float64(currentStep) / float64(steps))
-			heightmapImg.Image = compositeImg
-			heightmapImg.Refresh()
-			canvasImg.Image = finalImage
-			canvasImg.Refresh()
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+				heightmapImg.Image = compositeImg
+				heightmapImg.Refresh()
+				canvasImg.Image = finalImage
+				canvasImg.Refresh()
 
-			progressBar.SetText("Generation Complete!")
+				progressBar.SetText("Generation Complete!")
+			})
 		}()
 	})
 
