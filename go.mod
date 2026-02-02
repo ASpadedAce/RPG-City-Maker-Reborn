@@ -5,6 +5,7 @@ go 1.25.6
 require (
 	fyne.io/fyne/v2 v2.7.2
 	github.com/aquilax/go-perlin v1.1.0
+	github.com/chai2010/webp v1.4.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/ojrac/opensimplex-go v1.0.2
 )
@@ -37,9 +38,9 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
-	golang.org/x/image v0.24.0 // indirect
+	golang.org/x/image v0.35.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

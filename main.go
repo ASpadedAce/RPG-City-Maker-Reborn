@@ -12,15 +12,21 @@ import (
 	"os"
 	"path/filepath"
 
+	"image/jpeg"
+	"strings"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/chai2010/webp"
 )
 
 func main() {
-	a := app.New()
+	a := app.NewWithID("com.example.rpgcitymaker")
 	a.Settings().SetTheme(&CustomTheme{a.Settings().Theme()})
 	w := a.NewWindow("RPG City Maker")
 	w.Resize(fyne.NewSize(800, 600))
@@ -254,6 +260,9 @@ func main() {
 
 	var generateBtn *widget.Button
 	progressBar := NewTextOverlayProgressBar()
+	exportBtn := widget.NewButton("Export", func() {
+		showSaveDialog(w, canvasImg.Image, settings)
+	})
 
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
@@ -437,6 +446,8 @@ func main() {
 		generateBtn,
 		errorLabel,
 		progressBar,
+		widget.NewSeparator(),
+		exportBtn,
 	))
 
 	tabs := container.NewAppTabs(
@@ -463,4 +474,87 @@ func main() {
 
 	w.SetContent(split)
 	w.ShowAndRun()
+}
+
+func showSaveDialog(win fyne.Window, img image.Image, settings *Settings) {
+	fileNameEntry := widget.NewEntry()
+	fileNameEntry.SetPlaceHolder("image")
+
+	formatSelect := widget.NewSelect([]string{"PNG", "JPG", "WEBP"}, nil)
+	formatSelect.SetSelected("PNG")
+
+	pathLabel := widget.NewLabel(settings.LastExportPath)
+
+	browseBtn := widget.NewButton("Browse", func() {
+		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				log.Println("Error opening folder dialog:", err)
+				return
+			}
+			if uri == nil {
+				return
+			}
+			settings.LastExportPath = uri.Path()
+			pathLabel.SetText(settings.LastExportPath)
+		}, win)
+	})
+
+	content := container.NewVBox(
+		widget.NewLabel("Save to:"),
+		container.NewBorder(nil, nil, nil, browseBtn, pathLabel),
+		widget.NewLabel("Filename:"),
+		fileNameEntry,
+		widget.NewLabel("Format:"),
+		formatSelect,
+	)
+
+	saveDialog := dialog.NewCustom("Export Image", "Cancel", content, win)
+
+	saveBtn := widget.NewButton("Save", func() {
+		fileName := fileNameEntry.Text
+		if fileName == "" {
+			return
+		}
+
+		filePath := filepath.Join(pathLabel.Text, fileName+"."+strings.ToLower(formatSelect.Selected))
+		settings.LastExportPath = filepath.Dir(filePath)
+
+		file, err := os.Create(filePath)
+		if err != nil {
+			log.Println("Error creating file:", err)
+			return
+		}
+		defer file.Close()
+
+		switch formatSelect.Selected {
+		case "PNG":
+			err = png.Encode(file, img)
+		case "JPG":
+			err = jpeg.Encode(file, img, nil)
+		case "WEBP":
+			err = webp.Encode(file, img, &webp.Options{Lossless: true})
+		}
+		if err != nil {
+			log.Println("Failed to encode image:", err)
+		}
+		saveDialog.Hide()
+	})
+	saveBtn.Disable()
+
+	fileNameEntry.OnChanged = func(text string) {
+		if text == "" {
+			saveBtn.Disable()
+		} else {
+			saveBtn.Enable()
+		}
+	}
+
+	saveDialog.SetButtons([]fyne.CanvasObject{
+		widget.NewButton("Cancel", func() {
+			saveDialog.Hide()
+		}),
+		saveBtn,
+	})
+
+	saveDialog.Show()
 }

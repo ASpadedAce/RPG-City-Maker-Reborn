@@ -24,6 +24,7 @@ type Settings struct {
 	MinRiverWidth  float64 `json:"min_river_width"`
 	MaxRiverWidth  float64 `json:"max_river_width"`
 	RiverCurvyness float64 `json:"river_curvyness"`
+	LastExportPath string  `json:"last_export_path"`
 }
 
 func (s *Settings) Save() error {
@@ -58,6 +59,10 @@ func LoadSettings() (*Settings, error) {
 	file, err := os.Open(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				homeDir = "."
+			}
 			return &Settings{
 				Detail:         1,
 				Roughness:      0,
@@ -75,6 +80,7 @@ func LoadSettings() (*Settings, error) {
 				MinRiverWidth:  1,
 				MaxRiverWidth:  5,
 				RiverCurvyness: 50,
+				LastExportPath: homeDir,
 			}, nil
 		}
 		return nil, err
@@ -86,5 +92,14 @@ func LoadSettings() (*Settings, error) {
 	if err := decoder.Decode(&settings); err != nil {
 		return nil, err
 	}
+
+	if settings.LastExportPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "."
+		}
+		settings.LastExportPath = homeDir
+	}
+
 	return &settings, nil
 }
