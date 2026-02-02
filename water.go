@@ -28,13 +28,13 @@ func (pq priorityQueue) Swap(i, j int) {
 	pq[i].index = i
 	pq[j].index = j
 }
-func (pq *priorityQueue) Push(x interface{}) {
+func (pq *priorityQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*lakePixel)
 	item.index = n
 	*pq = append(*pq, item)
 }
-func (pq *priorityQueue) Pop() interface{} {
+func (pq *priorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
@@ -79,7 +79,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	noiseGen := opensimplex.New(seed)
 
 	// 3. Generate a lake in a subset of the chunks
-	for i := 0; i < numLakes; i++ {
+	for i := range numLakes {
 		if i >= len(chunkIndices) {
 			break
 		}
@@ -209,7 +209,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 	}
 
 	rivers := make([]River, numRivers)
-	for i := 0; i < numRivers; i++ {
+	for i := range numRivers {
 		widthPercent := float64(i) / float64(numRivers-1)
 		if numRivers == 1 {
 			widthPercent = 0.5
@@ -221,10 +221,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		return rivers[i].Width > rivers[j].Width
 	})
 
-	numControlPoints := int(avgDim * 0.03)
-	if numControlPoints < 60 {
-		numControlPoints = 60
-	}
+	numControlPoints := max(int(avgDim*0.03), 60)
 
 	for i := range rivers {
 		r := &rivers[i]

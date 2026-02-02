@@ -26,14 +26,14 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 		scale = 100.0
 	}
 
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
+	for x := range width {
+		for y := range height {
 			var noise float64
 			frequency := 1.0
 			amplitude := 1.0
 			maxAmplitude := 0.0
 
-			for i := 0; i < octaves; i++ {
+			for range octaves {
 				noise += p.Noise2D(float64(x)*frequency/scale, float64(y)*frequency/scale) * amplitude
 				maxAmplitude += amplitude
 				amplitude /= 2.0
@@ -110,8 +110,8 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 	noise := opensimplex.New(seed)
 	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
 	treeNoiseZoom := 0.05
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			val := noise.Eval2(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
 			val = (val + 1) / 2 // Normalize to 0-1
 			treeNoiseMap.SetGray(x, y, color.Gray{Y: uint8(val * 255)})
@@ -127,14 +127,11 @@ func GenerateTrees(img *image.RGBA, lakePixels []image.Point, minTreeSize, maxTr
 	randSrc := rand.New(rand.NewSource(seed))
 
 	// 3. Determine initial clump trees
-	numClumpTrees := int(treeClumpiness)
-	if numClumpTrees > numTreesToPlace {
-		numClumpTrees = numTreesToPlace
-	}
+	numClumpTrees := min(int(treeClumpiness), numTreesToPlace)
 
 	initialPoints := make([]image.Point, 0, numClumpTrees)
-	for i := 0; i < numClumpTrees; i++ {
-		for j := 0; j < 100; j++ { // try 100 times to find a valid spot
+	for range numClumpTrees {
+		for range 100 { // try 100 times to find a valid spot
 			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
 			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] {
 				initialPoints = append(initialPoints, p)
@@ -196,7 +193,7 @@ func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoi
 		listIndex := randSrc.Intn(len(activeList))
 		p := activeList[listIndex]
 		found := false
-		for i := 0; i < k; i++ {
+		for range k {
 			angle := randSrc.Float64() * 2 * math.Pi
 			radius := minRadius + randSrc.Float64()*minRadius
 			x, y := float64(p.X)+radius*math.Cos(angle), float64(p.Y)+radius*math.Sin(angle)
@@ -247,7 +244,7 @@ func bresenham(path []image.Point) []image.Point {
 	}
 
 	var fullPath []image.Point
-	for i := 0; i < len(path)-1; i++ {
+	for i := range len(path) - 1 {
 		p1, p2 := path[i], path[i+1]
 		dx, dy := p2.X-p1.X, p2.Y-p1.Y
 		absDx, absDy := int(math.Abs(float64(dx))), int(math.Abs(float64(dy)))
@@ -321,7 +318,7 @@ func calculatePath(start, end image.Point, curvyness, avgDim float64, randSrc *r
 
 	baseNumWaves := (dist / mainWavelength) * curvyness
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 
 		freqMultiplier := 1.0 + float64(i)
 
@@ -342,7 +339,7 @@ func calculatePath(start, end image.Point, curvyness, avgDim float64, randSrc *r
 
 	controlPoints := make([]image.Point, numControlPoints+1)
 
-	for i := 0; i <= numControlPoints; i++ {
+	for i := range numControlPoints + 1 {
 
 		t := float64(i) / float64(numControlPoints)
 
