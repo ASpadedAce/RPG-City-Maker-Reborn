@@ -373,6 +373,20 @@ func main() {
 		detailSlider,
 		roughnessLabel,
 		roughnessSlider,
+
+		widget.NewLabel(""), // Spacer
+
+		minTreeSizeLabel,
+		minTreeSizeSlider,
+		maxTreeSizeLabel,
+		maxTreeSizeSlider,
+		treeCoverageLabel,
+		treeCoverageSlider,
+		treeClumpinessLabel,
+		treeClumpinessSlider,
+	))
+
+	waterTab := container.NewTabItem("Water", container.NewVBox(
 		lakesLabel,
 		lakesSlider,
 		lakeSizeLowerLabel,
@@ -390,17 +404,6 @@ func main() {
 		maxRiverWidthSlider,
 		riverCurvynessLabel,
 		riverCurvynessSlider,
-
-		widget.NewLabel(""), // Spacer
-
-		minTreeSizeLabel,
-		minTreeSizeSlider,
-		maxTreeSizeLabel,
-		maxTreeSizeSlider,
-		treeCoverageLabel,
-		treeCoverageSlider,
-		treeClumpinessLabel,
-		treeClumpinessSlider,
 	))
 
 	imageTab := container.NewTabItem("Image", container.NewVBox(
@@ -419,10 +422,11 @@ func main() {
 	tabs := container.NewAppTabs(
 		imageTab,
 		terrainTab,
+		waterTab,
 	)
 
 	left := container.NewVBox(
-		widget.NewLabel("Hello World!"),
+		widget.NewLabel("RPG City Maker Reborn"),
 		tabs,
 	)
 
