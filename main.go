@@ -148,7 +148,9 @@ func main() {
 
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
-		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+		flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
+
+		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 		heightmapImg.Image = compositeImg
 
@@ -437,6 +439,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
+			flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
 
 			// Step 6: Applying Roughness
 			currentStep++
@@ -444,7 +447,7 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 			// Step 7: Generating Trees
 			currentStep++

@@ -85,6 +85,54 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 	return composite
 }
 
+func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Image {
+	bounds := heightmap.Bounds()
+	width := bounds.Dx()
+
+	// Create a new image with the road pixels drawn on it.
+	roadMask := image.NewGray(bounds)
+	for _, p := range roadPixels {
+		roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+	}
+
+	// Blur the road mask.
+	blurRadius := float64(width) * 0.01
+	blurredRoadMask := imaging.Blur(roadMask, blurRadius)
+
+	// Create a new image to store the blurred heightmap.
+	blurredHeightmap := imaging.Blur(heightmap, blurRadius)
+
+	// Create a new composite image.
+	composite := image.NewRGBA(bounds)
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			maskAlpha, _, _, _ := blurredRoadMask.At(x, y).RGBA()
+			if maskAlpha > 0 {
+				// Linearly interpolate between the original and blurred heightmap based on the mask alpha.
+				originalColor := heightmap.At(x, y)
+				blurredColor := blurredHeightmap.At(x, y)
+
+				r1, g1, b1, a1 := originalColor.RGBA()
+				r2, g2, b2, a2 := blurredColor.RGBA()
+
+				alpha := float64(maskAlpha) / 65535.0
+
+				r := uint16(float64(r1)*(1-alpha) + float64(r2)*alpha)
+				g := uint16(float64(g1)*(1-alpha) + float64(g2)*alpha)
+				b := uint16(float64(b1)*(1-alpha) + float64(b2)*alpha)
+				a := uint16(float64(a1)*(1-alpha) + float64(a2)*alpha)
+
+				composite.Set(x, y, color.RGBA64{R: r, G: g, B: b, A: a})
+			} else {
+				composite.Set(x, y, heightmap.At(x, y))
+			}
+		}
+	}
+
+	return composite
+}
+
 func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
