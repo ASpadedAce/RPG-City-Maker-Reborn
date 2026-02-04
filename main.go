@@ -144,7 +144,7 @@ func main() {
 			}
 		}
 
-		treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
@@ -451,7 +451,7 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
 			// Step 8: Finalizing Images
 			currentStep++
