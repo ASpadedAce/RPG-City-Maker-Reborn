@@ -22,7 +22,7 @@ type Road struct {
 	Importance          int
 }
 
-func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point) ([]image.Point, *image.RGBA) {
+func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, *image.RGBA) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	// Transparent background
 	for y := 0; y < height; y++ {
@@ -31,15 +31,15 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 		}
 	}
 
-	rand.Seed(settings.Seed)
+	randSrc := rand.New(rand.NewSource(seed))
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 
-	pois := generatePOIs(width, height, settings, allWaterPixels)
+	pois := generatePOIs(width, height, settings, allWaterPixels, randSrc)
 	if len(pois) == 0 {
 		return nil, img
 	}
 
-	roads := connectPOIs(pois, width, height, settings)
+	roads := connectPOIs(pois, width, height, settings, randSrc)
 	assignRoadWidths(roads, settings)
 
 	var allRoadPixels []image.Point
@@ -51,7 +51,7 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 	return allRoadPixels, img
 }
 
-func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.Point) []*PointOfInterest {
+func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.Point, randSrc *rand.Rand) []*PointOfInterest {
 	numPOIs := settings.NumRoads / 2
 	if numPOIs == 0 {
 		return nil
@@ -80,24 +80,24 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 		found := false
 		for j := 0; j < 100; j++ { // 100 retries to find a land spot
 			if i < numExits {
-				side := rand.Intn(4)
+				side := randSrc.Intn(4)
 				switch side {
 				case 0: // Top
-					x = rand.Intn(width)
+					x = randSrc.Intn(width)
 					y = 0
 				case 1: // Bottom
-					x = rand.Intn(width)
+					x = randSrc.Intn(width)
 					y = height - 1
 				case 2: // Left
 					x = 0
-					y = rand.Intn(height)
+					y = randSrc.Intn(height)
 				case 3: // Right
 					x = width - 1
-					y = rand.Intn(height)
+					y = randSrc.Intn(height)
 				}
 			} else {
-				angle := rand.Float64() * 2 * math.Pi
-				r := rand.Float64() * radius
+				angle := randSrc.Float64() * 2 * math.Pi
+				r := randSrc.Float64() * radius
 				x = int(float64(centerX) + r*math.Cos(angle))
 				y = int(float64(centerY) + r*math.Sin(angle))
 			}
@@ -115,7 +115,7 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 	return pois
 }
 
-func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings) []*Road {
+func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand) []*Road {
 	if len(pois) < 2 {
 		return nil
 	}
@@ -194,7 +194,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings)
 			midX := (fromNode.X + closest.X) / 2
 			midY := (fromNode.Y + closest.Y) / 2
 			dist := math.Sqrt(math.Pow(float64(fromNode.X-closest.X), 2) + math.Pow(float64(fromNode.Y-closest.Y), 2))
-			offset := dist * (settings.RoadCurvyness / 100.0) * (rand.Float64() - 0.5)
+			offset := dist * (settings.RoadCurvyness / 100.0) * (randSrc.Float64() - 0.5)
 
 			controlX := int(float64(midX) + offset)
 			controlY := int(float64(midY) + offset)

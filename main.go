@@ -110,16 +110,16 @@ func main() {
 	if canvasImg.Image == nil || heightmapImg.Image == nil {
 
 		// Initial image generation
-
-		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+		seedProvider := NewSeedProvider(settings.Seed)
+		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
 		var lakeImage image.Image
 
-		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
 
 		var riverImage image.Image
 
-		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
+		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
 
 		finalImage := riverImage.(*image.RGBA)
 
@@ -134,7 +134,7 @@ func main() {
 		}
 
 		allWaterPixels := append(flatLakePixels, riverPixels...)
-		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels)
+		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next())
 		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 			for x := 0; x < roadImage.Bounds().Max.X; x++ {
 				r, g, b, a := roadImage.At(x, y).RGBA()
@@ -144,7 +144,7 @@ func main() {
 			}
 		}
 
-		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
@@ -378,13 +378,14 @@ func main() {
 			steps := 8
 			currentStep := 0
 
+			seedProvider := NewSeedProvider(settings.Seed)
 			// Step 1: Generating Heightmap
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Heightmap", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
 			// Step 2: Generating Lakes
 			currentStep++
@@ -393,7 +394,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			var lakeImage image.Image
-			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
 
 			// Step 3: Generating Rivers
 			currentStep++
@@ -402,7 +403,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			var riverImage image.Image
-			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
+			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
 
 			finalImage := riverImage.(*image.RGBA)
 
@@ -419,7 +420,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			var roadImage *image.RGBA
-			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels) // Draw roadImage over finalImage
+			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
 			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 				for x := 0; x < roadImage.Bounds().Max.X; x++ {
 					r, g, b, a := roadImage.At(x, y).RGBA()
@@ -451,7 +452,7 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 			// Step 8: Finalizing Images
 			currentStep++
