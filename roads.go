@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"sync"
 	"unsafe"
 )
 
@@ -122,13 +123,15 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 
 	return pois
 }
-
 func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, allWaterPixels []image.Point) []*Road {
 	if len(pois) < 2 {
 		return nil
 	}
 
 	var roads []*Road
+	var roadChan = make(chan *Road)
+	var wg sync.WaitGroup
+
 	visited := make(map[*PointOfInterest]bool)
 	existingRoads := make(map[string]bool)
 
@@ -205,18 +208,30 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 				key = fmt.Sprintf("%p-%p", closest, fromNode)
 			}
 			existingRoads[key] = true
-
-			path := calculateRoadPath(fromNode, closest, settings.RoadCurvyness/100.0, avgDim, randSrc, numControlPoints, allWaterPixels)
-
-			roads = append(roads, &Road{
-				Start:  fromNode,
-				End:    closest,
-				Points: path,
-			})
+			wg.Add(1)
+			go func(fromNode, closest *PointOfInterest) {
+				defer wg.Done()
+				localRand := rand.New(rand.NewSource(randSrc.Int63()))
+				path := calculateRoadPath(fromNode, closest, settings.RoadCurvyness/100.0, avgDim, localRand, numControlPoints, allWaterPixels)
+				roadChan <- &Road{
+					Start:  fromNode,
+					End:    closest,
+					Points: path,
+				}
+			}(fromNode, closest)
 		} else {
 			// No more reachable POIs
 			break
 		}
+	}
+
+	go func() {
+		wg.Wait()
+		close(roadChan)
+	}()
+
+	for road := range roadChan {
+		roads = append(roads, road)
 	}
 
 	for _, road := range roads {
