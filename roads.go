@@ -13,6 +13,7 @@ import (
 type PointOfInterest struct {
 	X, Y        int
 	Connections int
+	IsExit      bool
 }
 
 type Road struct {
@@ -108,7 +109,8 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 			}
 		}
 		if found {
-			pois = append(pois, &PointOfInterest{X: x, Y: y})
+			isExit := i < numExits
+			pois = append(pois, &PointOfInterest{X: x, Y: y, IsExit: isExit})
 		}
 	}
 
@@ -166,6 +168,11 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 						key = fmt.Sprintf("%p-%p", other, poi)
 					}
 					if existingRoads[key] {
+						continue
+					}
+
+					// Don't connect two exit points
+					if poi.IsExit && other.IsExit {
 						continue
 					}
 
