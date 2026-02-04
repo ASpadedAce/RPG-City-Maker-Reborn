@@ -16,11 +16,16 @@ type PointOfInterest struct {
 	IsExit      bool
 }
 
+type PathPoint struct {
+	Point    image.Point
+	IsBridge bool
+}
+
 type Road struct {
-	Start, End, Control *PointOfInterest
-	Width               int
-	Points              []image.Point
-	Importance          int
+	Start, End *PointOfInterest
+	Width      int
+	Points     []PathPoint
+	Importance int
 }
 
 func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, *image.RGBA) {
@@ -34,18 +39,19 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 
 	randSrc := rand.New(rand.NewSource(seed))
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
+	bridgeColor := color.RGBA{R: 60, G: 42, B: 33, A: 255}
 
 	pois := generatePOIs(width, height, settings, allWaterPixels, randSrc)
 	if len(pois) == 0 {
 		return nil, img
 	}
 
-	roads := connectPOIs(pois, width, height, settings, randSrc)
+	roads := connectPOIs(pois, width, height, settings, randSrc, allWaterPixels)
 	assignRoadWidths(roads, settings)
 
 	var allRoadPixels []image.Point
 	for _, road := range roads {
-		roadPixels := drawRoad(img, road.Points, roadColor, road.Width)
+		roadPixels := drawRoad(img, road.Points, roadColor, bridgeColor, road.Width)
 		allRoadPixels = append(allRoadPixels, roadPixels...)
 	}
 
@@ -117,7 +123,7 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 	return pois
 }
 
-func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand) []*Road {
+func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, allWaterPixels []image.Point) []*Road {
 	if len(pois) < 2 {
 		return nil
 	}
@@ -200,7 +206,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 			}
 			existingRoads[key] = true
 
-			path := calculateRoadPath(fromNode, closest, settings.RoadCurvyness/100.0, avgDim, randSrc, numControlPoints)
+			path := calculateRoadPath(fromNode, closest, settings.RoadCurvyness/100.0, avgDim, randSrc, numControlPoints, allWaterPixels)
 
 			roads = append(roads, &Road{
 				Start:  fromNode,
@@ -241,10 +247,16 @@ func assignRoadWidths(roads []*Road, settings *Settings) {
 	}
 }
 
-func drawRoad(img *image.RGBA, points []image.Point, col color.Color, width int) []image.Point {
+func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int) []image.Point {
 	var roadPixels []image.Point
 	for i := 0; i < len(points)-1; i++ {
-		linePoints := drawLine(img, points[i].X, points[i].Y, points[i+1].X, points[i+1].Y, col, width)
+		p1 := points[i]
+		p2 := points[i+1]
+		c := roadColor
+		if p1.IsBridge && p2.IsBridge {
+			c = bridgeColor
+		}
+		linePoints := drawLine(img, p1.Point.X, p1.Point.Y, p2.Point.X, p2.Point.Y, c, width)
 		roadPixels = append(roadPixels, linePoints...)
 	}
 	return roadPixels
@@ -289,13 +301,18 @@ func bresenhamRoad(path []image.Point) []image.Point {
 	return fullPath
 }
 
-func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int) []image.Point {
+func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int, allWaterPixels []image.Point) []PathPoint {
 	dx := end.X - start.X
 	dy := end.Y - start.Y
 	dist := math.Sqrt(float64(dx*dx + dy*dy))
 
+	waterMap := make(map[image.Point]bool)
+	for _, p := range allWaterPixels {
+		waterMap[p] = true
+	}
+
 	if dist == 0 {
-		return []image.Point{{X: start.X, Y: start.Y}}
+		return []PathPoint{{Point: image.Point{X: start.X, Y: start.Y}, IsBridge: waterMap[image.Point{X: start.X, Y: start.Y}]}}
 	}
 
 	// Adjust curviness based on distance
@@ -303,7 +320,12 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 	adjustedCurvyness := curvyness * distanceFactor
 
 	if adjustedCurvyness == 0 {
-		return bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
+		points := bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
+		pathPoints := make([]PathPoint, len(points))
+		for i, p := range points {
+			pathPoints[i] = PathPoint{Point: p, IsBridge: waterMap[p]}
+		}
+		return pathPoints
 	}
 
 	type wave struct {
@@ -339,20 +361,29 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		t := float64(i) / float64(numControlPoints)
 		x := float64(start.X) + t*float64(dx)
 		y := float64(start.Y) + t*float64(dy)
-		perpX, perpY := -float64(dy)/dist, float64(dx)/dist
 
-		totalOffset := 0.0
-		for _, w := range waves {
-			totalOffset += math.Sin(t*w.numWaves*2*math.Pi+w.phase) * w.amplitude
+		p := image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
+		if !waterMap[p] {
+			perpX, perpY := -float64(dy)/dist, float64(dx)/dist
+
+			totalOffset := 0.0
+			for _, w := range waves {
+				totalOffset += math.Sin(t*w.numWaves*2*math.Pi+w.phase) * w.amplitude
+			}
+			totalOffset *= math.Sin(t * math.Pi)
+
+			x += totalOffset * perpX
+			y += totalOffset * perpY
 		}
-		totalOffset *= math.Sin(t * math.Pi)
-
-		x += totalOffset * perpX
-		y += totalOffset * perpY
 		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
 	}
 
-	return bresenhamRoad(controlPoints)
+	points := bresenhamRoad(controlPoints)
+	pathPoints := make([]PathPoint, len(points))
+	for i, p := range points {
+		pathPoints[i] = PathPoint{Point: p, IsBridge: waterMap[p]}
+	}
+	return pathPoints
 }
 
 // Bresenham's line algorithm for drawing segments of the curve
