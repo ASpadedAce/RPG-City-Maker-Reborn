@@ -22,7 +22,7 @@ type Road struct {
 	Importance          int
 }
 
-func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image) ([]image.Point, *image.RGBA) {
+func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point) ([]image.Point, *image.RGBA) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	// Transparent background
 	for y := 0; y < height; y++ {
@@ -34,7 +34,7 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image) 
 	rand.Seed(settings.Seed)
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 
-	pois := generatePOIs(width, height, settings)
+	pois := generatePOIs(width, height, settings, allWaterPixels)
 	if len(pois) == 0 {
 		return nil, img
 	}
@@ -51,10 +51,15 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image) 
 	return allRoadPixels, img
 }
 
-func generatePOIs(width, height int, settings *Settings) []*PointOfInterest {
+func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.Point) []*PointOfInterest {
 	numPOIs := settings.NumRoads / 2
 	if numPOIs == 0 {
 		return nil
+	}
+
+	waterMap := make(map[image.Point]bool)
+	for _, p := range allWaterPixels {
+		waterMap[p] = true
 	}
 
 	numExits := settings.RoadExits
@@ -62,7 +67,7 @@ func generatePOIs(width, height int, settings *Settings) []*PointOfInterest {
 		numExits = settings.NumRoads
 	}
 
-	pois := make([]*PointOfInterest, numPOIs)
+	pois := make([]*PointOfInterest, 0, numPOIs)
 	centerX := width / 2
 	centerY := height / 2
 
@@ -71,33 +76,40 @@ func generatePOIs(width, height int, settings *Settings) []*PointOfInterest {
 	radius := maxRadius * (settings.RoadDistribution / 100.0)
 
 	for i := 0; i < numPOIs; i++ {
-		// Handle exits
-		if i < numExits {
-			side := rand.Intn(4)
-			var x, y int
-			switch side {
-			case 0: // Top
-				x = rand.Intn(width)
-				y = 0
-			case 1: // Bottom
-				x = rand.Intn(width)
-				y = height - 1
-			case 2: // Left
-				x = 0
-				y = rand.Intn(height)
-			case 3: // Right
-				x = width - 1
-				y = rand.Intn(height)
+		var x, y int
+		found := false
+		for j := 0; j < 100; j++ { // 100 retries to find a land spot
+			if i < numExits {
+				side := rand.Intn(4)
+				switch side {
+				case 0: // Top
+					x = rand.Intn(width)
+					y = 0
+				case 1: // Bottom
+					x = rand.Intn(width)
+					y = height - 1
+				case 2: // Left
+					x = 0
+					y = rand.Intn(height)
+				case 3: // Right
+					x = width - 1
+					y = rand.Intn(height)
+				}
+			} else {
+				angle := rand.Float64() * 2 * math.Pi
+				r := rand.Float64() * radius
+				x = int(float64(centerX) + r*math.Cos(angle))
+				y = int(float64(centerY) + r*math.Sin(angle))
 			}
-			pois[i] = &PointOfInterest{X: x, Y: y}
-			continue
-		}
 
-		angle := rand.Float64() * 2 * math.Pi
-		r := rand.Float64() * radius
-		x := int(float64(centerX) + r*math.Cos(angle))
-		y := int(float64(centerY) + r*math.Sin(angle))
-		pois[i] = &PointOfInterest{X: x, Y: y}
+			if !waterMap[image.Point{X: x, Y: y}] {
+				found = true
+				break
+			}
+		}
+		if found {
+			pois = append(pois, &PointOfInterest{X: x, Y: y})
+		}
 	}
 
 	return pois
@@ -119,11 +131,18 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings)
 	minDist := -1.0
 
 	for _, poi := range pois {
+		if poi == nil {
+			continue
+		}
 		dist := math.Sqrt(math.Pow(float64(poi.X-centerX), 2) + math.Pow(float64(poi.Y-centerY), 2))
 		if startNode == nil || dist < minDist {
 			minDist = dist
 			startNode = poi
 		}
+	}
+
+	if startNode == nil {
+		return nil
 	}
 
 	visited[startNode] = true
@@ -135,6 +154,9 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings)
 
 		for poi := range visited {
 			for _, other := range pois {
+				if poi == nil || other == nil {
+					continue
+				}
 				if !visited[other] {
 					dist := math.Sqrt(math.Pow(float64(poi.X-other.X), 2) + math.Pow(float64(poi.Y-other.Y), 2))
 
@@ -182,6 +204,9 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings)
 				End:     closest,
 				Control: &PointOfInterest{X: controlX, Y: controlY},
 			})
+		} else {
+			// No more reachable POIs
+			break
 		}
 	}
 

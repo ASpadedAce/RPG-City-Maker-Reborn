@@ -125,26 +125,6 @@ func main() {
 
 		var roadImage *image.RGBA
 
-		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg)
-
-		// Draw roadImage over finalImage
-
-		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
-
-			for x := 0; x < roadImage.Bounds().Max.X; x++ {
-
-				r, g, b, a := roadImage.At(x, y).RGBA()
-
-				if a > 0 {
-
-					finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
-
-				}
-
-			}
-
-		}
-
 		var flatLakePixels []image.Point
 
 		for _, lake := range lakes {
@@ -154,6 +134,15 @@ func main() {
 		}
 
 		allWaterPixels := append(flatLakePixels, riverPixels...)
+		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels)
+		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
+			for x := 0; x < roadImage.Bounds().Max.X; x++ {
+				r, g, b, a := roadImage.At(x, y).RGBA()
+				if a > 0 {
+					finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
+				}
+			}
+		}
 
 		treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
@@ -299,7 +288,7 @@ func main() {
 	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
 
 	numRoadsLabel := widget.NewLabel(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
-	numRoadsSlider := widget.NewSlider(1, 1000)
+	numRoadsSlider := widget.NewSlider(0, 1000)
 	numRoadsSlider.OnChanged = func(val float64) {
 		settings.NumRoads = int(val)
 		numRoadsLabel.SetText(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
@@ -332,7 +321,7 @@ func main() {
 	maxRoadWidthSlider.SetValue(settings.MaxRoadWidth)
 
 	roadExitsLabel := widget.NewLabel(fmt.Sprintf("Road Exits: %d", settings.RoadExits))
-	roadExitsSlider := widget.NewSlider(1, 100)
+	roadExitsSlider := widget.NewSlider(0, 100)
 	roadExitsSlider.OnChanged = func(val float64) {
 		if val > float64(settings.NumRoads) {
 			val = float64(settings.NumRoads)
@@ -417,6 +406,12 @@ func main() {
 
 			finalImage := riverImage.(*image.RGBA)
 
+			var flatLakePixels []image.Point
+			for _, lake := range lakes {
+				flatLakePixels = append(flatLakePixels, lake...)
+			}
+			allWaterPixels := append(flatLakePixels, riverPixels...)
+
 			// Step 4: Generating Roads
 			currentStep++
 			fyne.Do(func() {
@@ -424,7 +419,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			var roadImage *image.RGBA
-			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg) // Draw roadImage over finalImage
+			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels) // Draw roadImage over finalImage
 			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 				for x := 0; x < roadImage.Bounds().Max.X; x++ {
 					r, g, b, a := roadImage.At(x, y).RGBA()
@@ -433,12 +428,6 @@ func main() {
 					}
 				}
 			}
-
-			var flatLakePixels []image.Point
-			for _, lake := range lakes {
-				flatLakePixels = append(flatLakePixels, lake...)
-			}
-			allWaterPixels := append(flatLakePixels, riverPixels...)
 
 			// Step 5: Darkening Water Areas
 			currentStep++
