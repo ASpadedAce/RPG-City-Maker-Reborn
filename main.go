@@ -51,6 +51,7 @@ func main() {
 	var lakes [][]image.Point
 	var riverPixels []image.Point
 	var treePixels []image.Point
+	var roadPixels []image.Point
 
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -107,25 +108,63 @@ func main() {
 	}
 
 	if canvasImg.Image == nil || heightmapImg.Image == nil {
+
 		// Initial image generation
+
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, settings.Seed)
+
 		var lakeImage image.Image
+
 		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, settings.Seed)
+
 		var riverImage image.Image
+
 		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
+
 		finalImage := riverImage.(*image.RGBA)
 
-		var flatLakePixels []image.Point
-		for _, lake := range lakes {
-			flatLakePixels = append(flatLakePixels, lake...)
+		var roadImage *image.RGBA
+
+		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg)
+
+		// Draw roadImage over finalImage
+
+		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
+
+			for x := 0; x < roadImage.Bounds().Max.X; x++ {
+
+				r, g, b, a := roadImage.At(x, y).RGBA()
+
+				if a > 0 {
+
+					finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
+
+				}
+
+			}
+
 		}
+
+		var flatLakePixels []image.Point
+
+		for _, lake := range lakes {
+
+			flatLakePixels = append(flatLakePixels, lake...)
+
+		}
+
 		allWaterPixels := append(flatLakePixels, riverPixels...)
 
 		treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
+
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
+
 		compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
+
 		heightmapImg.Image = compositeImg
+
 		canvasImg.Image = finalImage
+
 	}
 
 	detailLabel := widget.NewLabel(fmt.Sprintf("Detail: %.0f", settings.Detail))
@@ -259,6 +298,67 @@ func main() {
 	}
 	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
 
+	numRoadsLabel := widget.NewLabel(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
+	numRoadsSlider := widget.NewSlider(1, 1000)
+	numRoadsSlider.OnChanged = func(val float64) {
+		settings.NumRoads = int(val)
+		numRoadsLabel.SetText(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
+	}
+	numRoadsSlider.SetValue(float64(settings.NumRoads))
+
+	minRoadWidthLabel := widget.NewLabel(fmt.Sprintf("Min Road Width: %.0fpx", settings.MinRoadWidth))
+	minRoadWidthSlider := widget.NewSlider(1, 150)
+	maxRoadWidthLabel := widget.NewLabel(fmt.Sprintf("Max Road Width: %.0fpx", settings.MaxRoadWidth))
+	maxRoadWidthSlider := widget.NewSlider(1, 150)
+
+	minRoadWidthSlider.OnChanged = func(val float64) {
+		settings.MinRoadWidth = val
+		if settings.MinRoadWidth > settings.MaxRoadWidth {
+			settings.MaxRoadWidth = settings.MinRoadWidth
+			maxRoadWidthSlider.SetValue(settings.MaxRoadWidth)
+		}
+		minRoadWidthLabel.SetText(fmt.Sprintf("Min Road Width: %.0fpx", settings.MinRoadWidth))
+	}
+	minRoadWidthSlider.SetValue(settings.MinRoadWidth)
+
+	maxRoadWidthSlider.OnChanged = func(val float64) {
+		settings.MaxRoadWidth = val
+		if settings.MaxRoadWidth < settings.MinRoadWidth {
+			settings.MinRoadWidth = settings.MaxRoadWidth
+			minRoadWidthSlider.SetValue(settings.MinRoadWidth)
+		}
+		maxRoadWidthLabel.SetText(fmt.Sprintf("Max Road Width: %.0fpx", settings.MaxRoadWidth))
+	}
+	maxRoadWidthSlider.SetValue(settings.MaxRoadWidth)
+
+	roadExitsLabel := widget.NewLabel(fmt.Sprintf("Road Exits: %d", settings.RoadExits))
+	roadExitsSlider := widget.NewSlider(1, 100)
+	roadExitsSlider.OnChanged = func(val float64) {
+		if val > float64(settings.NumRoads) {
+			val = float64(settings.NumRoads)
+			roadExitsSlider.SetValue(val)
+		}
+		settings.RoadExits = int(val)
+		roadExitsLabel.SetText(fmt.Sprintf("Road Exits: %d", settings.RoadExits))
+	}
+	roadExitsSlider.SetValue(float64(settings.RoadExits))
+
+	roadCurvynessLabel := widget.NewLabel(fmt.Sprintf("Road Curvyness: %.0f%%", settings.RoadCurvyness))
+	roadCurvynessSlider := widget.NewSlider(0, 100)
+	roadCurvynessSlider.OnChanged = func(val float64) {
+		settings.RoadCurvyness = val
+		roadCurvynessLabel.SetText(fmt.Sprintf("Road Curvyness: %.0f%%", settings.RoadCurvyness))
+	}
+	roadCurvynessSlider.SetValue(settings.RoadCurvyness)
+
+	roadDistributionLabel := widget.NewLabel(fmt.Sprintf("Distribution: %.0f%%", settings.RoadDistribution))
+	roadDistributionSlider := widget.NewSlider(0, 100)
+	roadDistributionSlider.OnChanged = func(val float64) {
+		settings.RoadDistribution = val
+		roadDistributionLabel.SetText(fmt.Sprintf("Distribution: %.0f%%", settings.RoadDistribution))
+	}
+	roadDistributionSlider.SetValue(settings.RoadDistribution)
+
 	errorLabel := canvas.NewText("", color.RGBA{R: 255, A: 255})
 	errorLabel.TextSize = 12
 	errorLabel.Hide()
@@ -272,7 +372,7 @@ func main() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels)
 	})
 
 	generateBtn = widget.NewButton("Generate", func() {
@@ -286,7 +386,7 @@ func main() {
 				})
 			}()
 
-			steps := 7
+			steps := 8
 			currentStep := 0
 
 			// Step 1: Generating Heightmap
@@ -316,13 +416,31 @@ func main() {
 			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, settings.Seed, noiseImg)
 
 			finalImage := riverImage.(*image.RGBA)
+
+			// Step 4: Generating Roads
+			currentStep++
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Roads", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
+			var roadImage *image.RGBA
+			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg) // Draw roadImage over finalImage
+			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
+				for x := 0; x < roadImage.Bounds().Max.X; x++ {
+					r, g, b, a := roadImage.At(x, y).RGBA()
+					if a > 0 {
+						finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
+					}
+				}
+			}
+
 			var flatLakePixels []image.Point
 			for _, lake := range lakes {
 				flatLakePixels = append(flatLakePixels, lake...)
 			}
 			allWaterPixels := append(flatLakePixels, riverPixels...)
 
-			// Step 4: Darkening Water Areas
+			// Step 5: Darkening Water Areas
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
@@ -330,7 +448,7 @@ func main() {
 			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
-			// Step 5: Applying Roughness
+			// Step 6: Applying Roughness
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
@@ -338,7 +456,7 @@ func main() {
 			})
 			compositeImg := ApplyRoughness(darkenedHeightmap, settings.Roughness)
 
-			// Step 6: Generating Trees
+			// Step 7: Generating Trees
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
@@ -346,7 +464,7 @@ func main() {
 			})
 			treePixels = GenerateTrees(finalImage, allWaterPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, settings.Seed)
 
-			// Step 7: Finalizing Images
+			// Step 8: Finalizing Images
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
@@ -448,10 +566,26 @@ func main() {
 		riverCurvynessSlider,
 	))
 
+	roadDistributionSlider.SetValue(settings.RoadDistribution)
+
+	roadsTab := container.NewTabItem("Roads", container.NewVBox(
+		numRoadsLabel,
+		numRoadsSlider,
+		minRoadWidthLabel,
+		minRoadWidthSlider,
+		maxRoadWidthLabel,
+		maxRoadWidthSlider,
+		roadExitsLabel,
+		roadExitsSlider,
+		roadCurvynessLabel,
+		roadCurvynessSlider,
+		roadDistributionLabel,
+		roadDistributionSlider,
+	))
+
 	imageTab := container.NewTabItem("Image", container.NewVBox(
 		widget.NewLabel("Width:"),
-		widthEntry,
-		widget.NewLabel("Height:"),
+		widthEntry, widget.NewLabel("Height:"),
 		heightEntry,
 		widget.NewLabel("Seed:"),
 		seedEntry,
@@ -469,6 +603,7 @@ func main() {
 		imageTab,
 		terrainTab,
 		waterTab,
+		roadsTab,
 	)
 
 	left := container.NewVBox(
@@ -504,7 +639,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 	return buf, err
 }
 
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels []image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels []image.Point) {
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
 
@@ -566,6 +701,10 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 		for _, p := range treePixels {
 			treeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 		}
+		roadMask := image.NewGray(bounds)
+		for _, p := range roadPixels {
+			roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		}
 
 		imagesToSave := map[string]image.Image{
 			"canvas." + imgFormat:      canvasImg,
@@ -573,6 +712,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 			"lakes_mask." + imgFormat:  lakeMask,
 			"rivers_mask." + imgFormat: riverMask,
 			"trees_mask." + imgFormat:  treeMask,
+			"roads_mask." + imgFormat:  roadMask,
 		}
 
 		switch packageSelect.Selected {
