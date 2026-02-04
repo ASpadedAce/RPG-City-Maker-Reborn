@@ -232,7 +232,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		r.Start = getPointOnEdge(width, height, startEdge, randSrc)
 		r.End = getPointOnEdge(width, height, endEdge, randSrc)
 
-		path := calculatePath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
+		path := calculateRiverPath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
 
 		for _, p := range path {
 			if isWater[p] {
@@ -244,7 +244,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 					// Intersection is with another river
 					r.End = p
 				}
-				path = calculatePath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
+				path = calculateRiverPath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
 				break
 			}
 		}
@@ -260,6 +260,104 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 	}
 
 	return canvas, allRiverPixels
+}
+
+func bresenhamRiver(path []image.Point) []image.Point {
+	if len(path) < 2 {
+		return path
+	}
+
+	var fullPath []image.Point
+	for i := 0; i < len(path)-1; i++ {
+		p1, p2 := path[i], path[i+1]
+		dx, dy := p2.X-p1.X, p2.Y-p1.Y
+		absDx, absDy := int(math.Abs(float64(dx))), int(math.Abs(float64(dy)))
+		sx, sy := 1, 1
+		if dx < 0 {
+			sx = -1
+		}
+		if dy < 0 {
+			sy = -1
+		}
+		err := absDx - absDy
+
+		x, y := p1.X, p1.Y
+		for {
+			fullPath = append(fullPath, image.Point{X: x, Y: y})
+			if x == p2.X && y == p2.Y {
+				break
+			}
+			e2 := 2 * err
+			if e2 > -absDy {
+				err -= absDy
+				x += sx
+			}
+			if e2 < absDx {
+				err += absDx
+				y += sy
+			}
+		}
+	}
+	return fullPath
+}
+
+func calculateRiverPath(start, end image.Point, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int) []image.Point {
+	dx := end.X - start.X
+	dy := end.Y - start.Y
+	dist := math.Sqrt(float64(dx*dx + dy*dy))
+
+	if dist == 0 {
+		return []image.Point{start}
+	}
+
+	if curvyness == 0 {
+		return bresenhamRiver([]image.Point{start, end})
+	}
+
+	type wave struct {
+		amplitude float64
+		numWaves  float64
+		phase     float64
+	}
+
+	waves := make([]wave, 3)
+	amp := (avgDim / 10.0) * curvyness
+	mainWavelength := avgDim / 4.0
+	if mainWavelength < 1 {
+		mainWavelength = 1
+	}
+	baseNumWaves := (dist / mainWavelength) * curvyness
+
+	for i := 0; i < 3; i++ {
+		freqMultiplier := 1.0 + float64(i)
+		randomizedNumWaves := baseNumWaves * freqMultiplier * (0.75 + randSrc.Float64()*0.5)
+		waves[i] = wave{
+			amplitude: amp,
+			numWaves:  randomizedNumWaves,
+			phase:     randSrc.Float64() * 2 * math.Pi,
+		}
+		amp /= 3
+	}
+
+	controlPoints := make([]image.Point, numControlPoints+1)
+	for i := 0; i <= numControlPoints; i++ {
+		t := float64(i) / float64(numControlPoints)
+		x := float64(start.X) + t*float64(dx)
+		y := float64(start.Y) + t*float64(dy)
+		perpX, perpY := -float64(dy)/dist, float64(dx)/dist
+
+		totalOffset := 0.0
+		for _, w := range waves {
+			totalOffset += math.Sin(t*w.numWaves*2*math.Pi+w.phase) * w.amplitude
+		}
+		totalOffset *= math.Sin(t * math.Pi)
+
+		x += totalOffset * perpX
+		y += totalOffset * perpY
+		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
+	}
+
+	return bresenhamRiver(controlPoints)
 }
 
 func findCenter(pixels []image.Point) image.Point {

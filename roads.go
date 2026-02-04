@@ -45,7 +45,7 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 
 	var allRoadPixels []image.Point
 	for _, road := range roads {
-		roadPixels := drawCurve(img, road.Start, road.End, road.Control, roadColor, road.Width)
+		roadPixels := drawRoad(img, road.Points, roadColor, road.Width)
 		allRoadPixels = append(allRoadPixels, roadPixels...)
 	}
 
@@ -149,6 +149,9 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 
 	visited[startNode] = true
 
+	avgDim := float64(width+height) / 2.0
+	numControlPoints := max(int(avgDim*0.03), 60)
+
 	for len(visited) < len(pois) {
 		var closest *PointOfInterest
 		var fromNode *PointOfInterest
@@ -197,19 +200,12 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 			}
 			existingRoads[key] = true
 
-			// Create control point for curve
-			midX := (fromNode.X + closest.X) / 2
-			midY := (fromNode.Y + closest.Y) / 2
-			dist := math.Sqrt(math.Pow(float64(fromNode.X-closest.X), 2) + math.Pow(float64(fromNode.Y-closest.Y), 2))
-			offset := dist * (settings.RoadCurvyness / 100.0) * (randSrc.Float64() - 0.5)
-
-			controlX := int(float64(midX) + offset)
-			controlY := int(float64(midY) + offset)
+			path := calculateRoadPath(fromNode, closest, settings.RoadCurvyness/100.0, avgDim, randSrc, numControlPoints)
 
 			roads = append(roads, &Road{
-				Start:   fromNode,
-				End:     closest,
-				Control: &PointOfInterest{X: controlX, Y: controlY},
+				Start:  fromNode,
+				End:    closest,
+				Points: path,
 			})
 		} else {
 			// No more reachable POIs
@@ -245,20 +241,111 @@ func assignRoadWidths(roads []*Road, settings *Settings) {
 	}
 }
 
-func drawCurve(img *image.RGBA, p0, p1, p2 *PointOfInterest, col color.Color, width int) []image.Point {
-	var points []image.Point
-	var lastX, lastY int = -1, -1
-	for t := 0.0; t <= 1.0; t += 0.01 {
-		x := (1-t)*(1-t)*float64(p0.X) + 2*(1-t)*t*float64(p2.X) + t*t*float64(p1.X)
-		y := (1-t)*(1-t)*float64(p0.Y) + 2*(1-t)*t*float64(p2.Y) + t*t*float64(p1.Y)
-
-		if lastX != -1 {
-			linePoints := drawLine(img, lastX, lastY, int(x), int(y), col, width)
-			points = append(points, linePoints...)
-		}
-		lastX, lastY = int(x), int(y)
+func drawRoad(img *image.RGBA, points []image.Point, col color.Color, width int) []image.Point {
+	var roadPixels []image.Point
+	for i := 0; i < len(points)-1; i++ {
+		linePoints := drawLine(img, points[i].X, points[i].Y, points[i+1].X, points[i+1].Y, col, width)
+		roadPixels = append(roadPixels, linePoints...)
 	}
-	return points
+	return roadPixels
+}
+
+func bresenhamRoad(path []image.Point) []image.Point {
+	if len(path) < 2 {
+		return path
+	}
+
+	var fullPath []image.Point
+	for i := 0; i < len(path)-1; i++ {
+		p1, p2 := path[i], path[i+1]
+		dx, dy := p2.X-p1.X, p2.Y-p1.Y
+		absDx, absDy := int(math.Abs(float64(dx))), int(math.Abs(float64(dy)))
+		sx, sy := 1, 1
+		if dx < 0 {
+			sx = -1
+		}
+		if dy < 0 {
+			sy = -1
+		}
+		err := absDx - absDy
+
+		x, y := p1.X, p1.Y
+		for {
+			fullPath = append(fullPath, image.Point{X: x, Y: y})
+			if x == p2.X && y == p2.Y {
+				break
+			}
+			e2 := 2 * err
+			if e2 > -absDy {
+				err -= absDy
+				x += sx
+			}
+			if e2 < absDx {
+				err += absDx
+				y += sy
+			}
+		}
+	}
+	return fullPath
+}
+
+func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int) []image.Point {
+	dx := end.X - start.X
+	dy := end.Y - start.Y
+	dist := math.Sqrt(float64(dx*dx + dy*dy))
+
+	if dist == 0 {
+		return []image.Point{{X: start.X, Y: start.Y}}
+	}
+
+	if curvyness == 0 {
+		return bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
+	}
+
+	type wave struct {
+		amplitude float64
+		numWaves  float64
+		phase     float64
+	}
+
+	waves := make([]wave, 3)
+	amp := (avgDim / 10.0) * curvyness
+	mainWavelength := avgDim / 4.0
+	if mainWavelength < 1 {
+		mainWavelength = 1
+	}
+	baseNumWaves := (dist / mainWavelength) * curvyness
+
+	for i := 0; i < 3; i++ {
+		freqMultiplier := 1.0 + float64(i)
+		randomizedNumWaves := baseNumWaves * freqMultiplier * (0.75 + randSrc.Float64()*0.5)
+		waves[i] = wave{
+			amplitude: amp,
+			numWaves:  randomizedNumWaves,
+			phase:     randSrc.Float64() * 2 * math.Pi,
+		}
+		amp /= 3
+	}
+
+	controlPoints := make([]image.Point, numControlPoints+1)
+	for i := 0; i <= numControlPoints; i++ {
+		t := float64(i) / float64(numControlPoints)
+		x := float64(start.X) + t*float64(dx)
+		y := float64(start.Y) + t*float64(dy)
+		perpX, perpY := -float64(dy)/dist, float64(dx)/dist
+
+		totalOffset := 0.0
+		for _, w := range waves {
+			totalOffset += math.Sin(t*w.numWaves*2*math.Pi+w.phase) * w.amplitude
+		}
+		totalOffset *= math.Sin(t * math.Pi)
+
+		x += totalOffset * perpX
+		y += totalOffset * perpY
+		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
+	}
+
+	return bresenhamRoad(controlPoints)
 }
 
 // Bresenham's line algorithm for drawing segments of the curve
