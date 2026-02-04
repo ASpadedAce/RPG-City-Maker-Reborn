@@ -298,7 +298,11 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		return []image.Point{{X: start.X, Y: start.Y}}
 	}
 
-	if curvyness == 0 {
+	// Adjust curviness based on distance
+	distanceFactor := math.Min(1.0, dist/(avgDim*0.5))
+	adjustedCurvyness := curvyness * distanceFactor
+
+	if adjustedCurvyness == 0 {
 		return bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
 	}
 
@@ -308,23 +312,26 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		phase     float64
 	}
 
-	waves := make([]wave, 3)
-	amp := (avgDim / 10.0) * curvyness
+	waves := make([]wave, 2)
+	amp := (avgDim / 10.0) * adjustedCurvyness
 	mainWavelength := avgDim / 4.0
 	if mainWavelength < 1 {
 		mainWavelength = 1
 	}
-	baseNumWaves := (dist / mainWavelength) * curvyness
+	baseNumWaves := (dist / mainWavelength) * adjustedCurvyness
 
-	for i := 0; i < 3; i++ {
-		freqMultiplier := 1.0 + float64(i)
-		randomizedNumWaves := baseNumWaves * freqMultiplier * (0.75 + randSrc.Float64()*0.5)
-		waves[i] = wave{
-			amplitude: amp,
-			numWaves:  randomizedNumWaves,
-			phase:     randSrc.Float64() * 2 * math.Pi,
-		}
-		amp /= 3
+	// Main wave
+	waves[0] = wave{
+		amplitude: amp,
+		numWaves:  baseNumWaves * (0.75 + randSrc.Float64()*0.5),
+		phase:     randSrc.Float64() * 2 * math.Pi,
+	}
+
+	// Smaller wave for detours
+	waves[1] = wave{
+		amplitude: amp / 4,
+		numWaves:  baseNumWaves * 4 * (0.75 + randSrc.Float64()*0.5),
+		phase:     randSrc.Float64() * 2 * math.Pi,
 	}
 
 	controlPoints := make([]image.Point, numControlPoints+1)
