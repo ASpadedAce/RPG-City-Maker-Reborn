@@ -52,6 +52,7 @@ func main() {
 	var riverPixels []image.Point
 	var treePixels []image.Point
 	var roadPixels []image.Point
+	var bridgePixels []image.Point
 
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -134,7 +135,7 @@ func main() {
 		}
 
 		allWaterPixels := append(flatLakePixels, riverPixels...)
-		roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next())
+		roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next())
 		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 			for x := 0; x < roadImage.Bounds().Max.X; x++ {
 				r, g, b, a := roadImage.At(x, y).RGBA()
@@ -363,7 +364,7 @@ func main() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels)
 	})
 
 	generateBtn = widget.NewButton("Generate", func() {
@@ -422,7 +423,7 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			var roadImage *image.RGBA
-			roadPixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
+			roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
 			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 				for x := 0; x < roadImage.Bounds().Max.X; x++ {
 					r, g, b, a := roadImage.At(x, y).RGBA()
@@ -632,7 +633,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 	return buf, err
 }
 
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels []image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels []image.Point) {
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
 
@@ -698,14 +699,19 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 		for _, p := range roadPixels {
 			roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 		}
+		bridgeMask := image.NewGray(bounds)
+		for _, p := range bridgePixels {
+			bridgeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		}
 
 		imagesToSave := map[string]image.Image{
-			"canvas." + imgFormat:      canvasImg,
-			"heightmap." + imgFormat:   heightmapImg,
-			"lakes_mask." + imgFormat:  lakeMask,
-			"rivers_mask." + imgFormat: riverMask,
-			"trees_mask." + imgFormat:  treeMask,
-			"roads_mask." + imgFormat:  roadMask,
+			"canvas." + imgFormat:       canvasImg,
+			"heightmap." + imgFormat:    heightmapImg,
+			"lakes_mask." + imgFormat:   lakeMask,
+			"rivers_mask." + imgFormat:  riverMask,
+			"trees_mask." + imgFormat:   treeMask,
+			"roads_mask." + imgFormat:   roadMask,
+			"bridges_mask." + imgFormat: bridgeMask,
 		}
 
 		switch packageSelect.Selected {

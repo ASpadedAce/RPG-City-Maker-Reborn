@@ -29,7 +29,7 @@ type Road struct {
 	Importance int
 }
 
-func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, *image.RGBA) {
+func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, []image.Point, *image.RGBA) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	// Transparent background
 	for y := 0; y < height; y++ {
@@ -44,19 +44,21 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 
 	pois := generatePOIs(width, height, settings, allWaterPixels, randSrc)
 	if len(pois) == 0 {
-		return nil, img
+		return nil, nil, img
 	}
 
 	roads := connectPOIs(pois, width, height, settings, randSrc, allWaterPixels)
 	assignRoadWidths(roads, settings)
 
 	var allRoadPixels []image.Point
+	var allBridgePixels []image.Point
 	for _, road := range roads {
-		roadPixels := drawRoad(img, road.Points, roadColor, bridgeColor, road.Width)
+		roadPixels, bridgePixels := drawRoad(img, road.Points, roadColor, bridgeColor, road.Width)
 		allRoadPixels = append(allRoadPixels, roadPixels...)
+		allBridgePixels = append(allBridgePixels, bridgePixels...)
 	}
 
-	return allRoadPixels, img
+	return allRoadPixels, allBridgePixels, img
 }
 
 func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.Point, randSrc *rand.Rand) []*PointOfInterest {
@@ -262,19 +264,25 @@ func assignRoadWidths(roads []*Road, settings *Settings) {
 	}
 }
 
-func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int) []image.Point {
+func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int) ([]image.Point, []image.Point) {
 	var roadPixels []image.Point
+	var bridgePixels []image.Point
 	for i := 0; i < len(points)-1; i++ {
 		p1 := points[i]
 		p2 := points[i+1]
 		c := roadColor
-		if p1.IsBridge && p2.IsBridge {
+		isBridge := p1.IsBridge && p2.IsBridge
+		if isBridge {
 			c = bridgeColor
 		}
 		linePoints := drawLine(img, p1.Point.X, p1.Point.Y, p2.Point.X, p2.Point.Y, c, width)
-		roadPixels = append(roadPixels, linePoints...)
+		if isBridge {
+			bridgePixels = append(bridgePixels, linePoints...)
+		} else {
+			roadPixels = append(roadPixels, linePoints...)
+		}
 	}
-	return roadPixels
+	return roadPixels, bridgePixels
 }
 
 func bresenhamRoad(path []image.Point) []image.Point {
