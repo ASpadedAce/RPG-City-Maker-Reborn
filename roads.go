@@ -107,7 +107,7 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 				}
 			} else {
 				angle := randSrc.Float64() * 2 * math.Pi
-				r := randSrc.Float64() * radius
+				r := math.Sqrt(randSrc.Float64()) * radius
 				x = int(float64(centerX) + r*math.Cos(angle))
 				y = int(float64(centerY) + r*math.Sin(angle))
 			}
