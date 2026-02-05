@@ -291,7 +291,7 @@ func main() {
 	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
 
 	numRoadsLabel := widget.NewLabel(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
-	numRoadsSlider := widget.NewSlider(0, 1000)
+	numRoadsSlider := widget.NewSlider(0, 2000)
 	numRoadsSlider.OnChanged = func(val float64) {
 		settings.NumRoads = int(val)
 		numRoadsLabel.SetText(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
