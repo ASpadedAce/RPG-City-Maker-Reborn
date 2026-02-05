@@ -28,11 +28,13 @@ import (
 )
 
 func main() {
+	// Initialize the Fyne application and window
 	a := app.NewWithID("com.example.rpgcitymaker")
 	a.Settings().SetTheme(&CustomTheme{a.Settings().Theme()})
 	w := a.NewWindow("RPG City Maker")
 	w.Resize(fyne.NewSize(800, 600))
 
+	// Load settings from file, or use defaults if loading fails
 	settings, err := LoadSettings()
 	if err != nil {
 		log.Println("Error loading settings:", err)
@@ -40,14 +42,15 @@ func main() {
 		settings = &Settings{Detail: 1, Roughness: 0, Width: 300, Height: 300, Lakes: 0, LakeSizeLower: 1, LakeSizeUpper: 5}
 	}
 
+	// Create canvas objects for displaying the generated images
 	canvasImg := &canvas.Image{
 		FillMode: canvas.ImageFillContain,
 	}
-
 	heightmapImg := &canvas.Image{
 		FillMode: canvas.ImageFillContain,
 	}
 
+	// Initialize slices to store generated map features
 	var lakes [][]image.Point
 	var riverPixels []image.Point
 	var treePixels []image.Point
@@ -55,6 +58,7 @@ func main() {
 	var roadPixels []image.Point
 	var bridgePixels []image.Point
 
+	// Set up application configuration directory
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatal("Failed to get user config dir:", err)
@@ -62,6 +66,8 @@ func main() {
 	appConfigDir := filepath.Join(configDir, "rpgcitymakerreborn")
 	canvasPath := filepath.Join(appConfigDir, "canvas.png")
 	heightmapPath := filepath.Join(appConfigDir, "heightmap.png")
+
+	// Save settings and images on window close
 	w.SetOnClosed(func() {
 		if err := settings.Save(); err != nil {
 			log.Println("Error saving settings:", err)
@@ -91,6 +97,8 @@ func main() {
 			}
 		}
 	})
+
+	// Load previously saved images
 	canvasFile, err := os.Open(canvasPath)
 	if err == nil {
 		defer canvasFile.Close()
@@ -109,16 +117,19 @@ func main() {
 		}
 	}
 
+	// Generate initial images if none are loaded
 	if canvasImg.Image == nil || heightmapImg.Image == nil {
 
-		// Initial image generation
+		// Step 1: Generating Heightmap
 		seedProvider := NewSeedProvider(settings.Seed)
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
+		// Step 2: Generating Lakes
 		var lakeImage image.Image
 
 		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
 
+		// Step 3: Generating Rivers
 		var riverImage image.Image
 
 		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
@@ -136,6 +147,7 @@ func main() {
 		}
 
 		allWaterPixels := append(flatLakePixels, riverPixels...)
+		// Step 4: Generating Roads
 		roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next())
 		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
 			for x := 0; x < roadImage.Bounds().Max.X; x++ {
@@ -146,14 +158,19 @@ func main() {
 			}
 		}
 
+		// Step 5: Generating Buildings
 		buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
 
+		// Step 6: Generating Trees
 		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
+		// Step 7: Darkening Water Areas
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
+		// Step 8: Flattening Road Areas
 		flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
 
+		// Step 9: Applying Roughness
 		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 		heightmapImg.Image = compositeImg
@@ -161,7 +178,7 @@ func main() {
 		canvasImg.Image = finalImage
 
 	}
-
+	// Create UI elements for controlling terrain generation settings
 	detailLabel := widget.NewLabel(fmt.Sprintf("Detail: %.0f", settings.Detail))
 	detailSlider := widget.NewSlider(1, 16)
 	detailSlider.OnChanged = func(val float64) {
@@ -177,7 +194,7 @@ func main() {
 		roughnessLabel.SetText(fmt.Sprintf("Roughness: %.0f%%", settings.Roughness))
 	}
 	roughnessSlider.SetValue(settings.Roughness)
-
+	// Create UI elements for controlling lake generation settings
 	lakesLabel := widget.NewLabel(fmt.Sprintf("Lakes: %d", settings.Lakes))
 	lakesSlider := widget.NewSlider(0, 15)
 	lakesSlider.OnChanged = func(val float64) {
@@ -210,7 +227,7 @@ func main() {
 		lakeSizeUpperLabel.SetText(fmt.Sprintf("Max Lake Size: %.0f%%", settings.LakeSizeUpper))
 	}
 	lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
-
+	// Create UI elements for controlling river generation settings
 	riversLabel := widget.NewLabel(fmt.Sprintf("Rivers: %d", settings.Rivers))
 	riversSlider := widget.NewSlider(0, 5)
 	riversSlider.OnChanged = func(val float64) {
@@ -251,7 +268,7 @@ func main() {
 		riverCurvynessLabel.SetText(fmt.Sprintf("River Curvyness: %.0f%%", settings.RiverCurvyness))
 	}
 	riverCurvynessSlider.SetValue(settings.RiverCurvyness)
-
+	// Create UI elements for controlling tree generation settings
 	minTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
 	minTreeSizeSlider := widget.NewSlider(1, 150)
 	maxTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
@@ -292,7 +309,7 @@ func main() {
 		treeClumpinessLabel.SetText(fmt.Sprintf("Tree Clumpiness: %.0f%%", settings.TreeClumpiness))
 	}
 	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
-
+	// Create UI elements for controlling road generation settings
 	numRoadsLabel := widget.NewLabel(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
 	numRoadsSlider := widget.NewSlider(0, 2000)
 	numRoadsSlider.OnChanged = func(val float64) {
@@ -354,6 +371,7 @@ func main() {
 	}
 	roadDistributionSlider.SetValue(settings.RoadDistribution)
 
+	// Create UI elements for error display and action buttons
 	errorLabel := canvas.NewText("", color.RGBA{R: 255, A: 255})
 	errorLabel.TextSize = 12
 	errorLabel.Hide()
@@ -369,18 +387,20 @@ func main() {
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
 		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels)
 	})
-
+	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
+			// Disable button during generation
 			fyne.Do(func() {
 				generateBtn.Disable()
 			})
 			defer func() {
+				// Re-enable button after generation
 				fyne.Do(func() {
 					generateBtn.Enable()
 				})
 			}()
-
+			// Set up progress bar
 			steps := 9
 			currentStep := 0
 
@@ -483,7 +503,7 @@ func main() {
 			})
 		}()
 	})
-
+	// Create UI elements for image dimensions and seed
 	widthEntry := widget.NewEntry()
 	widthEntry.SetText(strconv.Itoa(settings.Width))
 	widthEntry.OnChanged = func(s string) {
@@ -532,7 +552,7 @@ func main() {
 		settings.Seed = time.Now().UnixNano()
 		seedEntry.SetText(strconv.FormatInt(settings.Seed, 10))
 	})
-
+	// Create tabs for organizing settings
 	terrainTab := container.NewTabItem("Terrain", container.NewVBox(
 		detailLabel,
 		detailSlider,
@@ -587,7 +607,7 @@ func main() {
 		roadDistributionLabel,
 		roadDistributionSlider,
 	))
-
+	// Create UI elements for building generation settings
 	numBuildingsLabel := widget.NewLabel(fmt.Sprintf("Number of Buildings: %d", settings.NumBuildings))
 	numBuildingsSlider := widget.NewSlider(0, 10000)
 	numBuildingsSlider.OnChanged = func(val float64) {
@@ -663,7 +683,7 @@ func main() {
 		exportHeightmapBtn,
 		exportMasksBtn,
 	))
-
+	// Create the main layout using a horizontal split
 	tabs := container.NewAppTabs(
 		imageTab,
 		terrainTab,
@@ -687,10 +707,12 @@ func main() {
 		right,
 	)
 	split.SetOffset(0.3)
-
+	// Set the window content and start the application
 	w.SetContent(split)
 	w.ShowAndRun()
 }
+
+// getImageData encodes an image to the specified format and returns the data as a byte buffer.
 func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 	buf := new(bytes.Buffer)
 	var err error
@@ -705,7 +727,9 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 	return buf, err
 }
 
+// showMasksSaveDialog displays a dialog for saving the generated masks.
 func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point) {
+	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
 
@@ -752,7 +776,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 		imgFormat := strings.ToLower(formatSelect.Selected)
 		bounds := canvasImg.Bounds()
 
-		// Create mask images
+		// Create mask images from the generated data
 		lakeMask := image.NewGray(bounds)
 		for _, lake := range lakes {
 			for _, p := range lake {
@@ -790,7 +814,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 			"bridges_mask." + imgFormat:   bridgeMask,
 			"buildings_mask." + imgFormat: buildingMask,
 		}
-
+		// Save the images based on the selected packaging option
 		switch packageSelect.Selected {
 		case "Folder":
 			exportPath := filepath.Join(pathLabel.Text, folderName)
@@ -888,6 +912,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 	saveDialog.Show()
 }
 
+// saveImage saves an image to the specified path.
 func saveImage(img image.Image, path string) {
 	file, err := os.Create(path)
 	if err != nil {
@@ -910,7 +935,9 @@ func saveImage(img image.Image, path string) {
 	}
 }
 
+// showSaveDialog displays a dialog for saving an image.
 func showSaveDialog(win fyne.Window, img image.Image, settings *Settings) {
+	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("image")
 

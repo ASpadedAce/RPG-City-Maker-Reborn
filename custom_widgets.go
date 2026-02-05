@@ -6,6 +6,7 @@ import (
 )
 
 // TextOverlayProgressBar is a custom widget that displays a progress bar with text overlay.
+// This allows showing progress information (e.g., step description) directly on the progress bar.
 type TextOverlayProgressBar struct {
 	widget.BaseWidget
 	progressBar *widget.ProgressBar
@@ -22,7 +23,7 @@ func NewTextOverlayProgressBar() *TextOverlayProgressBar {
 	return p
 }
 
-// SetValue sets the progress value.
+// SetValue sets the progress value of the underlying progress bar.
 func (p *TextOverlayProgressBar) SetValue(v float64) {
 	p.progressBar.SetValue(v)
 }
@@ -41,31 +42,38 @@ func (p *TextOverlayProgressBar) CreateRenderer() fyne.WidgetRenderer {
 	}
 }
 
+// textOverlayProgressBarRenderer is the renderer for the TextOverlayProgressBar.
+// It handles the layout and rendering of the progress bar and the overlay text.
 type textOverlayProgressBarRenderer struct {
 	progressBar *widget.ProgressBar
 	label       *widget.Label
 	objects     []fyne.CanvasObject
 }
 
+// Layout defines the size and position of the progress bar and the label.
 func (r *textOverlayProgressBarRenderer) Layout(size fyne.Size) {
 	r.progressBar.Resize(size)
 	r.label.Resize(size)
 	r.label.Move(fyne.NewPos(0, 0))
 }
 
+// MinSize returns the minimum size of the widget.
 func (r *textOverlayProgressBarRenderer) MinSize() fyne.Size {
 	return r.progressBar.MinSize()
 }
 
+// Refresh redraws the widget.
 func (r *textOverlayProgressBarRenderer) Refresh() {
 	r.progressBar.Refresh()
 	r.label.Refresh()
 }
 
+// Objects returns the canvas objects that make up the widget.
 func (r *textOverlayProgressBarRenderer) Objects() []fyne.CanvasObject {
 	return r.objects
 }
 
+// Destroy is a no-op for this renderer.
 func (r *textOverlayProgressBarRenderer) Destroy() {}
 
 // CustomTheme is a custom theme to make the progress bar thinner.
@@ -79,6 +87,7 @@ func NewCustomTheme(theme fyne.Theme) *CustomTheme {
 }
 
 // Size returns the size for a given themeable item.
+// It overrides the default progress bar height to make it thinner.
 func (t *CustomTheme) Size(name fyne.ThemeSizeName) float32 {
 	if name == "progressBar.height" {
 		return 10

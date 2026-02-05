@@ -7,48 +7,64 @@ import (
 	"time"
 )
 
+// Settings holds all the user-configurable parameters for map generation.
 type Settings struct {
-	Detail               float64 `json:"detail"`
-	Roughness            float64 `json:"roughness"`
-	Width                int     `json:"width"`
-	Height               int     `json:"height"`
-	Lakes                int     `json:"lakes"`
-	LakeSizeLower        float64 `json:"lake_size_lower"`
-	LakeSizeUpper        float64 `json:"lake_size_upper"`
-	MinTreeSize          float64 `json:"min_tree_size"`
-	MaxTreeSize          float64 `json:"max_tree_size"`
-	TreeCoverage         float64 `json:"tree_coverage"`
-	TreeClumpiness       float64 `json:"tree_clumpiness"`
-	Seed                 int64   `json:"seed"`
-	Rivers               int     `json:"rivers"`
-	MinRiverWidth        float64 `json:"min_river_width"`
-	MaxRiverWidth        float64 `json:"max_river_width"`
-	RiverCurvyness       float64 `json:"river_curvyness"`
-	NumRoads             int     `json:"num_roads"`
-	MinRoadWidth         float64 `json:"min_road_width"`
-	MaxRoadWidth         float64 `json:"max_road_width"`
-	RoadExits            int     `json:"road_exits"`
-	RoadCurvyness        float64 `json:"road_curvyness"`
-	RoadDistribution     float64 `json:"road_distribution"`
+	// Terrain settings
+	Detail    float64 `json:"detail"`
+	Roughness float64 `json:"roughness"`
+	Width     int     `json:"width"`
+	Height    int     `json:"height"`
+
+	// Water settings
+	Lakes          int     `json:"lakes"`
+	LakeSizeLower  float64 `json:"lake_size_lower"`
+	LakeSizeUpper  float64 `json:"lake_size_upper"`
+	Rivers         int     `json:"rivers"`
+	MinRiverWidth  float64 `json:"min_river_width"`
+	MaxRiverWidth  float64 `json:"max_river_width"`
+	RiverCurvyness float64 `json:"river_curvyness"`
+
+	// Tree settings
+	MinTreeSize    float64 `json:"min_tree_size"`
+	MaxTreeSize    float64 `json:"max_tree_size"`
+	TreeCoverage   float64 `json:"tree_coverage"`
+	TreeClumpiness float64 `json:"tree_clumpiness"`
+
+	// Road settings
+	NumRoads         int     `json:"num_roads"`
+	MinRoadWidth     float64 `json:"min_road_width"`
+	MaxRoadWidth     float64 `json:"max_road_width"`
+	RoadExits        int     `json:"road_exits"`
+	RoadCurvyness    float64 `json:"road_curvyness"`
+	RoadDistribution float64 `json:"road_distribution"`
+
+	// Building settings
 	NumBuildings         int     `json:"num_buildings"`
 	MinBuildingSize      float64 `json:"min_building_size"`
 	MaxBuildingSize      float64 `json:"max_building_size"`
 	BuildingDistribution float64 `json:"building_distribution"`
 	BuildingShape        string  `json:"building_shape"`
-	LastExportPath       string  `json:"last_export_path"`
+
+	// General settings
+	Seed           int64  `json:"seed"`
+	LastExportPath string `json:"last_export_path"`
 }
 
+// Save saves the current settings to a JSON file in the user's config directory.
 func (s *Settings) Save() error {
+	// Get the user's config directory
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return err
 	}
 
+	// Create the application's config directory if it doesn't exist
 	appConfigDir := filepath.Join(configDir, "rpgcitymakerreborn")
 	if err := os.MkdirAll(appConfigDir, 0755); err != nil {
 		return err
 	}
 
+	// Create and open the settings file
 	configFile := filepath.Join(appConfigDir, "settings.json")
 	file, err := os.Create(configFile)
 	if err != nil {
@@ -56,19 +72,25 @@ func (s *Settings) Save() error {
 	}
 	defer file.Close()
 
+	// Encode the settings as JSON and write to the file
 	encoder := json.NewEncoder(file)
 	return encoder.Encode(s)
 }
 
+// LoadSettings loads the settings from a JSON file in the user's config directory.
+// If the file doesn't exist, it returns a default set of settings.
 func LoadSettings() (*Settings, error) {
+	// Get the user's config directory
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return nil, err
 	}
 
+	// Open the settings file
 	configFile := filepath.Join(configDir, "rpgcitymakerreborn", "settings.json")
 	file, err := os.Open(configFile)
 	if err != nil {
+		// If the file doesn't exist, return default settings
 		if os.IsNotExist(err) {
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
@@ -109,12 +131,14 @@ func LoadSettings() (*Settings, error) {
 	}
 	defer file.Close()
 
+	// Decode the JSON data into a Settings struct
 	var settings Settings
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&settings); err != nil {
 		return nil, err
 	}
 
+	// Ensure LastExportPath is set to a default value if it's empty
 	if settings.LastExportPath == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {

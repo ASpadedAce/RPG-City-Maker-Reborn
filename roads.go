@@ -11,17 +11,20 @@ import (
 	"unsafe"
 )
 
+// PointOfInterest represents a location on the map where roads may start, end, or intersect.
 type PointOfInterest struct {
 	X, Y        int
 	Connections int
 	IsExit      bool
 }
 
+// PathPoint represents a single point in a road's path, with a flag to indicate if it's a bridge.
 type PathPoint struct {
 	Point    image.Point
 	IsBridge bool
 }
 
+// Road represents a connection between two Points of Interest.
 type Road struct {
 	Start, End *PointOfInterest
 	Width      int
@@ -29,27 +32,33 @@ type Road struct {
 	Importance int
 }
 
+// GenerateRoads is the main function for creating roads on the map.
 func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, []image.Point, *image.RGBA) {
+	// Step 1: Initialize a transparent image for drawing roads
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	// Transparent background
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			img.Set(x, y, color.Transparent)
 		}
 	}
 
+	// Step 2: Set up random number generator and colors
 	randSrc := rand.New(rand.NewSource(seed))
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 	bridgeColor := color.RGBA{R: 60, G: 42, B: 33, A: 255}
 
+	// Step 3: Generate Points of Interest (POIs)
 	pois := generatePOIs(width, height, settings, allWaterPixels, randSrc)
 	if len(pois) == 0 {
 		return nil, nil, img
 	}
 
+	// Step 4: Connect POIs to form roads
 	roads := connectPOIs(pois, width, height, settings, randSrc, allWaterPixels)
+	// Step 5: Assign widths to the roads based on their importance
 	assignRoadWidths(roads, settings)
 
+	// Step 6: Draw the roads on the image
 	var allRoadPixels []image.Point
 	var allBridgePixels []image.Point
 	for _, road := range roads {
@@ -61,6 +70,7 @@ func GenerateRoads(width, height int, settings *Settings, noiseImg image.Image, 
 	return allRoadPixels, allBridgePixels, img
 }
 
+// generatePOIs creates the initial set of points where roads will originate.
 func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.Point, randSrc *rand.Rand) []*PointOfInterest {
 	numPOIs := settings.NumRoads / 2
 	if numPOIs == 0 {
@@ -81,15 +91,16 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 	centerX := width / 2
 	centerY := height / 2
 
-	// Distribution affects the radius
+	// Distribution affects the radius of POI generation
 	maxRadius := math.Min(float64(width)/2, float64(height)/2)
 	radius := maxRadius * (settings.RoadDistribution / 100.0)
 
 	for i := 0; i < numPOIs; i++ {
 		var x, y int
 		found := false
-		for j := 0; j < 100; j++ { // 100 retries to find a land spot
+		for j := 0; j < 100; j++ { // Retries to find a land spot
 			if i < numExits {
+				// Create POIs at the map edges
 				side := randSrc.Intn(4)
 				switch side {
 				case 0: // Top
@@ -106,6 +117,7 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 					y = randSrc.Intn(height)
 				}
 			} else {
+				// Create POIs within the map
 				angle := randSrc.Float64() * 2 * math.Pi
 				r := math.Sqrt(randSrc.Float64()) * radius
 				x = int(float64(centerX) + r*math.Cos(angle))
@@ -125,6 +137,8 @@ func generatePOIs(width, height int, settings *Settings, allWaterPixels []image.
 
 	return pois
 }
+
+// connectPOIs creates roads by connecting the generated Points of Interest.
 func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, allWaterPixels []image.Point) []*Road {
 	if len(pois) < 2 {
 		return nil
@@ -137,7 +151,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 	visited := make(map[*PointOfInterest]bool)
 	existingRoads := make(map[string]bool)
 
-	// Find the center-most POI
+	// Find the center-most POI to start connecting from
 	centerX := width / 2
 	centerY := height / 2
 	var startNode *PointOfInterest
@@ -160,9 +174,11 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 
 	visited[startNode] = true
 
+	// Use average dimension for controlling road path calculation
 	avgDim := float64(width+height) / 2.0
 	numControlPoints := max(int(avgDim*0.03), 60)
 
+	// Connect all POIs using a minimum spanning tree-like algorithm
 	for len(visited) < len(pois) {
 		var closest *PointOfInterest
 		var fromNode *PointOfInterest
@@ -176,7 +192,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 				if !visited[other] {
 					dist := math.Sqrt(math.Pow(float64(poi.X-other.X), 2) + math.Pow(float64(poi.Y-other.Y), 2))
 
-					// Check if road exists
+					// Check if a road already exists between these two POIs
 					key := fmt.Sprintf("%p-%p", poi, other)
 					if uintptr(unsafe.Pointer(poi)) > uintptr(unsafe.Pointer(other)) {
 						key = fmt.Sprintf("%p-%p", other, poi)
@@ -185,7 +201,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 						continue
 					}
 
-					// Don't connect two exit points
+					// Avoid connecting two exit points directly
 					if poi.IsExit && other.IsExit {
 						continue
 					}
@@ -204,7 +220,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 			fromNode.Connections++
 			closest.Connections++
 
-			// Add road to existing roads map
+			// Add road to existing roads map to prevent duplicates
 			key := fmt.Sprintf("%p-%p", fromNode, closest)
 			if uintptr(unsafe.Pointer(fromNode)) > uintptr(unsafe.Pointer(closest)) {
 				key = fmt.Sprintf("%p-%p", closest, fromNode)
@@ -222,7 +238,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 				}
 			}(fromNode, closest)
 		} else {
-			// No more reachable POIs
+			// No more reachable POIs, break the loop
 			break
 		}
 	}
@@ -236,6 +252,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 		roads = append(roads, road)
 	}
 
+	// Calculate road importance based on the number of connections at its endpoints
 	for _, road := range roads {
 		road.Importance = road.Start.Connections + road.End.Connections
 	}
@@ -243,11 +260,13 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 	return roads
 }
 
+// assignRoadWidths sets the width of each road based on its importance.
 func assignRoadWidths(roads []*Road, settings *Settings) {
 	if len(roads) == 0 {
 		return
 	}
 
+	// Sort roads by importance in descending order
 	sort.Slice(roads, func(i, j int) bool {
 		return roads[i].Importance > roads[j].Importance
 	})
@@ -259,11 +278,13 @@ func assignRoadWidths(roads []*Road, settings *Settings) {
 		widthStep = (maxWidth - minWidth) / float64(len(roads)-1)
 	}
 
+	// Assign widths, with more important roads being wider
 	for i, road := range roads {
 		road.Width = int(maxWidth - float64(i)*widthStep)
 	}
 }
 
+// drawRoad draws a single road on the image, including bridges.
 func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int) ([]image.Point, []image.Point) {
 	var roadPixels []image.Point
 	var bridgePixels []image.Point
@@ -285,6 +306,7 @@ func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.
 	return roadPixels, bridgePixels
 }
 
+// bresenhamRoad uses Bresenham's line algorithm to create a path between control points.
 func bresenhamRoad(path []image.Point) []image.Point {
 	if len(path) < 2 {
 		return path
@@ -324,6 +346,7 @@ func bresenhamRoad(path []image.Point) []image.Point {
 	return fullPath
 }
 
+// calculateRoadPath computes the path for a road, including curves and bridges.
 func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int, allWaterPixels []image.Point) []PathPoint {
 	dx := end.X - start.X
 	dy := end.Y - start.Y
@@ -338,7 +361,7 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		return []PathPoint{{Point: image.Point{X: start.X, Y: start.Y}, IsBridge: waterMap[image.Point{X: start.X, Y: start.Y}]}}
 	}
 
-	// Adjust curviness based on distance
+	// Adjust curviness based on the distance between the POIs
 	distanceFactor := math.Min(1.0, dist/(avgDim*0.5))
 	adjustedCurvyness := curvyness * distanceFactor
 
@@ -351,6 +374,7 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		return pathPoints
 	}
 
+	// Use sine waves to create curves in the road
 	type wave struct {
 		amplitude float64
 		numWaves  float64
@@ -365,20 +389,21 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 	}
 	baseNumWaves := (dist / mainWavelength) * adjustedCurvyness
 
-	// Main wave
+	// Main wave for overall curve
 	waves[0] = wave{
 		amplitude: amp,
 		numWaves:  baseNumWaves * (0.75 + randSrc.Float64()*0.5),
 		phase:     randSrc.Float64() * 2 * math.Pi,
 	}
 
-	// Smaller wave for detours
+	// Smaller wave for minor detours and a more natural look
 	waves[1] = wave{
 		amplitude: amp / 4,
 		numWaves:  baseNumWaves * 4 * (0.75 + randSrc.Float64()*0.5),
 		phase:     randSrc.Float64() * 2 * math.Pi,
 	}
 
+	// Generate control points for the curve
 	controlPoints := make([]image.Point, numControlPoints+1)
 	for i := 0; i <= numControlPoints; i++ {
 		t := float64(i) / float64(numControlPoints)
@@ -401,6 +426,7 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
 	}
 
+	// Create the final path using Bresenham's algorithm between control points
 	points := bresenhamRoad(controlPoints)
 	pathPoints := make([]PathPoint, len(points))
 	for i, p := range points {
@@ -409,7 +435,7 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 	return pathPoints
 }
 
-// Bresenham's line algorithm for drawing segments of the curve
+// drawLine draws a line with a specified width on the image.
 func drawLine(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int) []image.Point {
 	var points []image.Point
 	dx := abs(x1 - x0)
@@ -452,6 +478,7 @@ func drawLine(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int) [
 	return points
 }
 
+// abs returns the absolute value of an integer.
 func abs(x int) int {
 	if x < 0 {
 		return -x

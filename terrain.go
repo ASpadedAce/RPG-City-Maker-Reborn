@@ -14,13 +14,16 @@ import (
 	"github.com/ojrac/opensimplex-go"
 )
 
+// Constants for Perlin noise generation
 const (
 	alpha = 2.
 	beta  = 2.
 	n     = 3
 )
 
+// GenerateHeightmap creates a grayscale image representing the terrain's elevation using Perlin noise.
 func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) image.Image {
+	// Initialize Perlin noise generator
 	p := perlin.NewPerlin(alpha, beta, n, seed)
 	img := image.NewGray(image.Rect(0, 0, width, height))
 
@@ -28,6 +31,7 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 		scale = 100.0
 	}
 
+	// Use multiple goroutines to speed up noise generation
 	numGoroutines := runtime.NumCPU()
 	var wg sync.WaitGroup
 	rowsPerGoroutine := height / numGoroutines
@@ -43,6 +47,7 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 			defer wg.Done()
 			for y := startY; y < endY; y++ {
 				for x := 0; x < width; x++ {
+					// Combine multiple octaves of noise for more detail
 					var noise float64
 					frequency := 1.0
 					amplitude := 1.0
@@ -55,6 +60,7 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 						frequency *= 2.0
 					}
 
+					// Normalize the noise value and set the pixel color
 					noise /= maxAmplitude
 					grayColor := uint8((noise + 1) * 127.5)
 					img.SetGray(x, y, color.Gray{Y: grayColor})
@@ -67,11 +73,13 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 	return img
 }
 
+// ApplyRoughness adds a visual roughness effect to the heightmap.
 func ApplyRoughness(heightmap image.Image, roughness float64) image.Image {
 	bounds := heightmap.Bounds()
 	composite := image.NewRGBA(bounds)
 	draw.Draw(composite, bounds, heightmap, image.Point{}, draw.Src)
 
+	// The alpha value of the overlay determines the roughness effect
 	alphaValue := 255 - uint8(roughness*2.55)
 	overlay := image.NewUniform(color.RGBA{R: 128, G: 128, B: 128, A: alphaValue})
 	draw.Draw(composite, bounds, overlay, image.Point{}, draw.Over)
@@ -91,11 +99,11 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 		lakeMask.Set(p.X, p.Y, black)
 	}
 
-	// Apply a Gaussian blur to the lake mask
+	// Apply a Gaussian blur to the lake mask to create smooth edges
 	blurRadius := float64(width) * 0.05
 	blurredLakeMask := imaging.Blur(lakeMask, blurRadius)
 
-	// Composite the blurred lake mask onto the heightmap with 50% opacity
+	// Composite the blurred lake mask onto the heightmap with some opacity
 	composite := image.NewRGBA(bounds)
 	draw.Draw(composite, bounds, heightmap, image.Point{}, draw.Src)
 	draw.DrawMask(composite, bounds, blurredLakeMask, image.Point{}, image.NewUniform(color.Alpha{192}), image.Point{}, draw.Over)
@@ -103,31 +111,33 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 	return composite
 }
 
+// FlattenRoadAreas smoothens the terrain under roads.
 func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Image {
 	bounds := heightmap.Bounds()
 	width := bounds.Dx()
 
-	// Create a new image with the road pixels drawn on it.
+	// Create a mask with the road pixels
 	roadMask := image.NewGray(bounds)
 	for _, p := range roadPixels {
 		roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 	}
 
-	// Blur the road mask.
+	// Blur the road mask to create a smooth transition
 	blurRadius := float64(width) * 0.01
 	blurredRoadMask := imaging.Blur(roadMask, blurRadius)
 
-	// Create a new image to store the blurred heightmap.
+	// Blur the entire heightmap
 	blurredHeightmap := imaging.Blur(heightmap, blurRadius)
 
-	// Create a new composite image.
+	// Create a new composite image
 	composite := image.NewRGBA(bounds)
 
+	// Interpolate between the original and blurred heightmap based on the road mask
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			maskAlpha, _, _, _ := blurredRoadMask.At(x, y).RGBA()
 			if maskAlpha > 0 {
-				// Linearly interpolate between the original and blurred heightmap based on the mask alpha.
+				// Linearly interpolate between the original and blurred heightmap
 				originalColor := heightmap.At(x, y)
 				blurredColor := blurredHeightmap.At(x, y)
 
@@ -151,11 +161,12 @@ func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Ima
 	return composite
 }
 
+// GenerateTrees places trees on the map.
 func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
 
-	// 1. Calculate number of trees to place from coverage %.
+	// Step 1: Calculate the number of trees to place based on coverage percentage.
 	avgTreeSize := (minTreeSize + maxTreeSize) / 2
 	if avgTreeSize <= 0 {
 		return nil
@@ -172,7 +183,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 		return nil
 	}
 
-	// 2. Generate a simplex noise map for tree placement.
+	// Step 2: Generate a simplex noise map to guide tree placement.
 	noise := opensimplex.New(seed)
 	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
 	treeNoiseZoom := 0.05
@@ -185,6 +196,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	}
 	threshold := uint8(255 * (1 - (treeCoverage / 100.0)))
 
+	// Create lookup maps for water, roads, and buildings for efficient collision detection
 	isLake := make(map[image.Point]bool)
 	for _, p := range lakePixels {
 		isLake[p] = true
@@ -202,7 +214,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 
 	randSrc := rand.New(rand.NewSource(seed))
 
-	// 3. Determine initial clump trees
+	// Step 3: Determine initial points for clumps of trees.
 	numClumpTrees := min(int(treeClumpiness), numTreesToPlace)
 
 	initialPoints := make([]image.Point, 0, numClumpTrees)
@@ -216,14 +228,14 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 		}
 	}
 
-	// 4. Place remaining trees using Bridson's Algorithm
+	// Step 4: Place remaining trees using Poisson Disc Sampling for a natural distribution.
 	minRadius := minTreeSize
 	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
 		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] && !isBuilding[p]
 	}, seed)
 
 	var treePixels []image.Point
-	// 5. Draw the trees.
+	// Step 5: Draw the trees on the image.
 	numGoroutines := runtime.NumCPU()
 	if len(allPoints) < numGoroutines {
 		numGoroutines = len(allPoints)
@@ -282,6 +294,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	return treePixels
 }
 
+// poissonDiscSampling generates points that are randomly distributed but no closer than a given minimum radius.
 func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoints []image.Point, isValid func(image.Point) bool, seed int64) []image.Point {
 	randSrc := rand.New(rand.NewSource(seed))
 	points := initialPoints
