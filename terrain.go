@@ -6,6 +6,8 @@ import (
 	"image/draw"
 	"math"
 	"math/rand"
+	"runtime"
+	"sync"
 
 	"github.com/aquilax/go-perlin"
 	"github.com/disintegration/imaging"
@@ -26,25 +28,41 @@ func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) im
 		scale = 100.0
 	}
 
-	for x := range width {
-		for y := range height {
-			var noise float64
-			frequency := 1.0
-			amplitude := 1.0
-			maxAmplitude := 0.0
+	numGoroutines := runtime.NumCPU()
+	var wg sync.WaitGroup
+	rowsPerGoroutine := height / numGoroutines
 
-			for range octaves {
-				noise += p.Noise2D(float64(x)*frequency/scale, float64(y)*frequency/scale) * amplitude
-				maxAmplitude += amplitude
-				amplitude /= 2.0
-				frequency *= 2.0
-			}
-
-			noise /= maxAmplitude
-			grayColor := uint8((noise + 1) * 127.5)
-			img.SetGray(x, y, color.Gray{Y: grayColor})
+	for i := 0; i < numGoroutines; i++ {
+		startY := i * rowsPerGoroutine
+		endY := startY + rowsPerGoroutine
+		if i == numGoroutines-1 {
+			endY = height
 		}
+		wg.Add(1)
+		go func(startY, endY int) {
+			defer wg.Done()
+			for y := startY; y < endY; y++ {
+				for x := 0; x < width; x++ {
+					var noise float64
+					frequency := 1.0
+					amplitude := 1.0
+					maxAmplitude := 0.0
+
+					for j := 0; j < octaves; j++ {
+						noise += p.Noise2D(float64(x)*frequency/scale, float64(y)*frequency/scale) * amplitude
+						maxAmplitude += amplitude
+						amplitude /= 2.0
+						frequency *= 2.0
+					}
+
+					noise /= maxAmplitude
+					grayColor := uint8((noise + 1) * 127.5)
+					img.SetGray(x, y, color.Gray{Y: grayColor})
+				}
+			}
+		}(startY, endY)
 	}
+	wg.Wait()
 
 	return img
 }
@@ -201,29 +219,61 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTre
 
 	var treePixels []image.Point
 	// 5. Draw the trees.
-	for _, p := range allPoints {
-		size := minTreeSize + randSrc.Float64()*(maxTreeSize-minTreeSize)
-		if size <= 0 {
-			continue
+	numGoroutines := runtime.NumCPU()
+	if len(allPoints) < numGoroutines {
+		numGoroutines = len(allPoints)
+	}
+	if numGoroutines == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan []image.Point, numGoroutines)
+	pointsPerGoroutine := (len(allPoints) + numGoroutines - 1) / numGoroutines
+
+	for i := 0; i < numGoroutines; i++ {
+		start := i * pointsPerGoroutine
+		end := start + pointsPerGoroutine
+		if end > len(allPoints) {
+			end = len(allPoints)
 		}
-		r := size / 2
-		// Use a simple pixel-by-pixel circle drawing method
-		for y := p.Y - int(r); y <= p.Y+int(r); y++ {
-			for x := p.X - int(r); x <= p.X+int(r); x++ {
-				pt := image.Point{X: x, Y: y}
-				if !pt.In(img.Bounds()) || isLake[pt] || isRoad[pt] {
+
+		wg.Add(1)
+		go func(points []image.Point, seed int64) {
+			defer wg.Done()
+			localRand := rand.New(rand.NewSource(seed))
+			localTreePixels := make([]image.Point, 0)
+			for _, p := range points {
+				size := minTreeSize + localRand.Float64()*(maxTreeSize-minTreeSize)
+				if size <= 0 {
 					continue
 				}
+				r := size / 2
+				for y := p.Y - int(r); y <= p.Y+int(r); y++ {
+					for x := p.X - int(r); x <= p.X+int(r); x++ {
+						pt := image.Point{X: x, Y: y}
+						if !pt.In(img.Bounds()) || isLake[pt] || isRoad[pt] {
+							continue
+						}
 
-				if (math.Pow(float64(x-p.X), 2) + math.Pow(float64(y-p.Y), 2)) <= r*r {
-					// Blend the tree color with the background
-					// For simplicity, we just set a solid color for now.
-					img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
-					treePixels = append(treePixels, pt)
+						if (math.Pow(float64(x-p.X), 2) + math.Pow(float64(y-p.Y), 2)) <= r*r {
+							img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
+							localTreePixels = append(localTreePixels, pt)
+						}
+					}
 				}
 			}
-		}
+			results <- localTreePixels
+		}(allPoints[start:end], seed+int64(i))
 	}
+
+	wg.Wait()
+	close(results)
+
+	for res := range results {
+		treePixels = append(treePixels, res...)
+	}
+
 	return treePixels
 }
 
