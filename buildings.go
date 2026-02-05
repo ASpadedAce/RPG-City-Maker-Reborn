@@ -1,0 +1,172 @@
+package main
+
+import (
+	"image"
+	"image/color"
+	"math"
+	"math/rand"
+	"sort"
+)
+
+func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, roadPixels, allWaterPixels []image.Point, seed int64) []image.Point {
+	if settings.NumBuildings == 0 {
+		return nil
+	}
+
+	randSrc := rand.New(rand.NewSource(seed))
+	buildingColor := color.RGBA{R: 128, G: 128, B: 128, A: 255} // Gray color for buildings
+
+	isWater := make(map[image.Point]bool)
+	for _, p := range allWaterPixels {
+		isWater[p] = true
+	}
+
+	isRoad := make(map[image.Point]bool)
+	for _, p := range roadPixels {
+		isRoad[p] = true
+	}
+
+	isBuilding := make(map[image.Point]bool)
+	var buildingPixels []image.Point
+	var anchorPoints []image.Point
+	if len(roadPixels) > 0 {
+		anchorPoints = roadPixels
+	} else {
+		// If no roads, use all land pixels as anchors
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				p := image.Point{X: x, Y: y}
+				if !isWater[p] {
+					anchorPoints = append(anchorPoints, p)
+				}
+			}
+		}
+	}
+	if len(anchorPoints) == 0 {
+		return nil
+	}
+	// Sort anchor points to have a deterministic order if needed, although we are selecting randomly
+	sort.Slice(anchorPoints, func(i, j int) bool {
+		if anchorPoints[i].Y != anchorPoints[j].Y {
+			return anchorPoints[i].Y < anchorPoints[j].Y
+		}
+		return anchorPoints[i].X < anchorPoints[j].X
+	})
+	landPoints := make([]image.Point, 0, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			p := image.Point{X: x, Y: y}
+			if !isWater[p] && !isRoad[p] {
+				landPoints = append(landPoints, p)
+			}
+		}
+	}
+	buildingsPlaced := 0
+	searchTries := 100                                // Number of attempts to find a spot for a building
+	maxPlacementAttempts := settings.NumBuildings * 5 // To prevent infinite loops
+
+	for buildingsPlaced < settings.NumBuildings && maxPlacementAttempts > 0 {
+		maxPlacementAttempts--
+
+		var anchor image.Point
+		if randSrc.Float64() > settings.BuildingDistribution/100.0 {
+			// Place near roads
+			anchor = anchorPoints[randSrc.Intn(len(anchorPoints))]
+		} else {
+			// Place randomly on land
+			if len(landPoints) == 0 {
+				continue // No land to place buildings on
+			}
+			anchor = landPoints[randSrc.Intn(len(landPoints))]
+		}
+
+		for i := 0; i < searchTries; i++ {
+			searchRadius := float64(i) * 2.0 // Search in expanding circles
+			angle := randSrc.Float64() * 2 * math.Pi
+			dist := searchRadius * randSrc.Float64()
+			center := image.Point{
+				X: anchor.X + int(dist*math.Cos(angle)),
+				Y: anchor.Y + int(dist*math.Sin(angle)),
+			}
+			if settings.BuildingDistribution == 100 {
+				center = image.Point{
+					X: randSrc.Intn(width),
+					Y: randSrc.Intn(height),
+				}
+			}
+
+			if center.X < 0 || center.Y < 0 || center.X >= width || center.Y >= height {
+				continue
+			}
+			size := settings.MinBuildingSize + randSrc.Float64()*(settings.MaxBuildingSize-settings.MinBuildingSize)
+			pixels, ok := getBuildingPixels(center, size, settings.BuildingShape, isWater, isRoad, isBuilding, width, height, randSrc)
+			if ok {
+				for _, p := range pixels {
+					img.Set(p.X, p.Y, buildingColor)
+					isBuilding[p] = true
+					buildingPixels = append(buildingPixels, p)
+				}
+				buildingsPlaced++
+				break // Found a spot, move to next building
+			}
+		}
+	}
+	return buildingPixels
+}
+
+func getBuildingPixels(center image.Point, size float64, shape string, isWater, isRoad, isBuilding map[image.Point]bool, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
+	var pixels []image.Point
+	var halfSize = int(size / 2)
+
+	switch shape {
+	case "squares":
+		for y := center.Y - halfSize; y <= center.Y+halfSize; y++ {
+			for x := center.X - halfSize; x <= center.X+halfSize; x++ {
+				p := image.Point{X: x, Y: y}
+				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+					return nil, false
+				}
+				pixels = append(pixels, p)
+			}
+		}
+	case "circles":
+		r2 := (size / 2) * (size / 2)
+		for y := center.Y - halfSize; y <= center.Y+halfSize; y++ {
+			for x := center.X - halfSize; x <= center.X+halfSize; x++ {
+				dx, dy := float64(x-center.X), float64(y-center.Y)
+				if dx*dx+dy*dy <= r2 {
+					p := image.Point{X: x, Y: y}
+					if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+						return nil, false
+					}
+					pixels = append(pixels, p)
+				}
+			}
+		}
+	case "rectangles":
+		longSide := size
+		shortSide := randSrc.Float64()*(size-float64(halfSize)) + float64(halfSize)
+		var w, h int
+		if randSrc.Intn(2) == 0 {
+			w, h = int(longSide), int(shortSide)
+		} else {
+			w, h = int(shortSide), int(longSide)
+		}
+		halfW, halfH := w/2, h/2
+
+		for y := center.Y - halfH; y <= center.Y+halfH; y++ {
+			for x := center.X - halfW; x <= center.X+halfW; x++ {
+				p := image.Point{X: x, Y: y}
+				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+					return nil, false
+				}
+				pixels = append(pixels, p)
+			}
+		}
+	}
+
+	if len(pixels) == 0 {
+		return nil, false
+	}
+	return pixels, true
+}

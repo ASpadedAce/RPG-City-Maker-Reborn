@@ -151,7 +151,7 @@ func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Ima
 	return composite
 }
 
-func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
+func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
 
@@ -195,6 +195,11 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTre
 		isRoad[p] = true
 	}
 
+	isBuilding := make(map[image.Point]bool)
+	for _, p := range buildingPixels {
+		isBuilding[p] = true
+	}
+
 	randSrc := rand.New(rand.NewSource(seed))
 
 	// 3. Determine initial clump trees
@@ -204,7 +209,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTre
 	for range numClumpTrees {
 		for range 100 { // try 100 times to find a valid spot
 			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
-			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] {
+			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] && !isBuilding[p] {
 				initialPoints = append(initialPoints, p)
 				break
 			}
@@ -214,7 +219,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTre
 	// 4. Place remaining trees using Bridson's Algorithm
 	minRadius := minTreeSize
 	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
-		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p]
+		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] && !isBuilding[p]
 	}, seed)
 
 	var treePixels []image.Point
@@ -252,7 +257,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels []image.Point, minTre
 				for y := p.Y - int(r); y <= p.Y+int(r); y++ {
 					for x := p.X - int(r); x <= p.X+int(r); x++ {
 						pt := image.Point{X: x, Y: y}
-						if !pt.In(img.Bounds()) || isLake[pt] || isRoad[pt] {
+						if !pt.In(img.Bounds()) || isLake[pt] || isRoad[pt] || isBuilding[pt] {
 							continue
 						}
 

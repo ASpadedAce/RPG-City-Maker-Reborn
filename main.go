@@ -1,5 +1,6 @@
 package main
 
+///okie dokie now let's add a major feature: building generation. We should create a new tab for buildings in the program and create a new file buildings.go for the generation logic. I'd like there to be several settings for the building generation. First is the number of buildings, which should number from 0 to 10000. Secondly is the minimum and maximum building size, which should exactly mirror how tree size is determined, with the exception that it's not the diameter of a circle, but instead the crictical dimension of a shape (see below). Next is distribution, ranging from 0% to 100%. At 0% distribution buildings will be placed directly next to roads and each other. At 100% distribution they will be scattered randomly around the map. We need a setting for building shape represented as a dropdown. The first setting will be "squares" (where each building is just a square, with the critical dimension being side length) then "circles" (critical dimension diameter) then "rectangles" (critical dimension longest side length, side lengths are determined randomly from min and max with the longest side length being equal to or shorter then the max and the shortest stide length being above or equal to the minimum size).  No part of a building should be placed on water. No part of a building should be placed on a road. We should generate trees after buildings and not allow the center of a tree to be placed on a building.
 import (
 	"archive/tar"
 	"archive/zip"
@@ -51,6 +52,7 @@ func main() {
 	var lakes [][]image.Point
 	var riverPixels []image.Point
 	var treePixels []image.Point
+	var buildingPixels []image.Point
 	var roadPixels []image.Point
 	var bridgePixels []image.Point
 
@@ -145,7 +147,9 @@ func main() {
 			}
 		}
 
-		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+		buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+
+		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
@@ -364,7 +368,7 @@ func main() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels)
 	})
 
 	generateBtn = widget.NewButton("Generate", func() {
@@ -378,7 +382,7 @@ func main() {
 				})
 			}()
 
-			steps := 8
+			steps := 9
 			currentStep := 0
 
 			seedProvider := NewSeedProvider(settings.Seed)
@@ -433,7 +437,15 @@ func main() {
 				}
 			}
 
-			// Step 5: Darkening Water Areas
+			// Step 5: Generating Buildings
+			currentStep++
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Buildings", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
+			buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+
+			// Step 6: Darkening Water Areas
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
@@ -442,7 +454,7 @@ func main() {
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 			flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
 
-			// Step 6: Applying Roughness
+			// Step 7: Applying Roughness
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
@@ -450,15 +462,15 @@ func main() {
 			})
 			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
-			// Step 7: Generating Trees
+			// Step 8: Generating Trees
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
-			// Step 8: Finalizing Images
+			// Step 9: Finalizing Images
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
@@ -577,6 +589,66 @@ func main() {
 		roadDistributionSlider,
 	))
 
+	numBuildingsLabel := widget.NewLabel(fmt.Sprintf("Number of Buildings: %d", settings.NumBuildings))
+	numBuildingsSlider := widget.NewSlider(0, 10000)
+	numBuildingsSlider.OnChanged = func(val float64) {
+		settings.NumBuildings = int(val)
+		numBuildingsLabel.SetText(fmt.Sprintf("Number of Buildings: %d", settings.NumBuildings))
+	}
+	numBuildingsSlider.SetValue(float64(settings.NumBuildings))
+
+	minBuildingSizeLabel := widget.NewLabel(fmt.Sprintf("Min Building Size: %.0fpx", settings.MinBuildingSize))
+	minBuildingSizeSlider := widget.NewSlider(1, 150)
+	maxBuildingSizeLabel := widget.NewLabel(fmt.Sprintf("Max Building Size: %.0fpx", settings.MaxBuildingSize))
+	maxBuildingSizeSlider := widget.NewSlider(1, 150)
+
+	minBuildingSizeSlider.OnChanged = func(val float64) {
+		settings.MinBuildingSize = val
+		if settings.MinBuildingSize > settings.MaxBuildingSize {
+			settings.MaxBuildingSize = settings.MinBuildingSize
+			maxBuildingSizeSlider.SetValue(settings.MaxBuildingSize)
+		}
+		minBuildingSizeLabel.SetText(fmt.Sprintf("Min Building Size: %.0fpx", settings.MinBuildingSize))
+	}
+	minBuildingSizeSlider.SetValue(settings.MinBuildingSize)
+
+	maxBuildingSizeSlider.OnChanged = func(val float64) {
+		settings.MaxBuildingSize = val
+		if settings.MaxBuildingSize < settings.MinBuildingSize {
+			settings.MinBuildingSize = settings.MaxBuildingSize
+			minBuildingSizeSlider.SetValue(settings.MinBuildingSize)
+		}
+		maxBuildingSizeLabel.SetText(fmt.Sprintf("Max Building Size: %.0fpx", settings.MaxBuildingSize))
+	}
+	maxBuildingSizeSlider.SetValue(settings.MaxBuildingSize)
+
+	buildingDistributionLabel := widget.NewLabel(fmt.Sprintf("Building Distribution: %.0f%%", settings.BuildingDistribution))
+	buildingDistributionSlider := widget.NewSlider(0, 100)
+	buildingDistributionSlider.OnChanged = func(val float64) {
+		settings.BuildingDistribution = val
+		buildingDistributionLabel.SetText(fmt.Sprintf("Building Distribution: %.0f%%", settings.BuildingDistribution))
+	}
+	buildingDistributionSlider.SetValue(settings.BuildingDistribution)
+
+	buildingShapeLabel := widget.NewLabel("Building Shape:")
+	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles"}, func(s string) {
+		settings.BuildingShape = s
+	})
+	buildingShapeSelect.SetSelected(settings.BuildingShape)
+
+	buildingsTab := container.NewTabItem("Buildings", container.NewVBox(
+		numBuildingsLabel,
+		numBuildingsSlider,
+		minBuildingSizeLabel,
+		minBuildingSizeSlider,
+		maxBuildingSizeLabel,
+		maxBuildingSizeSlider,
+		buildingDistributionLabel,
+		buildingDistributionSlider,
+		buildingShapeLabel,
+		buildingShapeSelect,
+	))
+
 	imageTab := container.NewTabItem("Image", container.NewVBox(
 		widget.NewLabel("Width:"),
 		widthEntry, widget.NewLabel("Height:"),
@@ -598,6 +670,7 @@ func main() {
 		terrainTab,
 		waterTab,
 		roadsTab,
+		buildingsTab,
 	)
 
 	left := container.NewVBox(
@@ -633,7 +706,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 	return buf, err
 }
 
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels []image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point) {
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
 
@@ -703,15 +776,20 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 		for _, p := range bridgePixels {
 			bridgeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 		}
+		buildingMask := image.NewGray(bounds)
+		for _, p := range buildingPixels {
+			buildingMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		}
 
 		imagesToSave := map[string]image.Image{
-			"canvas." + imgFormat:       canvasImg,
-			"heightmap." + imgFormat:    heightmapImg,
-			"lakes_mask." + imgFormat:   lakeMask,
-			"rivers_mask." + imgFormat:  riverMask,
-			"trees_mask." + imgFormat:   treeMask,
-			"roads_mask." + imgFormat:   roadMask,
-			"bridges_mask." + imgFormat: bridgeMask,
+			"canvas." + imgFormat:         canvasImg,
+			"heightmap." + imgFormat:      heightmapImg,
+			"lakes_mask." + imgFormat:     lakeMask,
+			"rivers_mask." + imgFormat:    riverMask,
+			"trees_mask." + imgFormat:     treeMask,
+			"roads_mask." + imgFormat:     roadMask,
+			"bridges_mask." + imgFormat:   bridgeMask,
+			"buildings_mask." + imgFormat: buildingMask,
 		}
 
 		switch packageSelect.Selected {
