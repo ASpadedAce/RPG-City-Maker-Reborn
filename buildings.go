@@ -118,7 +118,11 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 
 			// Attempt to create a building at the selected center
 			size := settings.MinBuildingSize + randSrc.Float64()*(settings.MaxBuildingSize-settings.MinBuildingSize)
-			pixels, ok := getBuildingPixels(center, size, settings.BuildingShape, isWater, isRoad, isBuilding, width, height, randSrc)
+			shape := settings.BuildingShape
+			if shape == "mixed" {
+				shape = chooseShape(randSrc, settings.BuildingShapeRatios)
+			}
+			pixels, ok := getBuildingPixels(center, size, shape, isWater, isRoad, isBuilding, width, height, randSrc)
 			if ok {
 				// If successful, draw the building and update data structures
 				for _, p := range pixels {
@@ -132,6 +136,32 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		}
 	}
 	return buildingPixels
+}
+
+// chooseShape selects a building shape based on the provided ratios.
+func chooseShape(randSrc *rand.Rand, ratios map[string]float64) string {
+	// Create a slice of shapes and their cumulative weights
+	var shapes []string
+	var weights []float64
+	var cumulativeWeight float64
+	for shape, weight := range ratios {
+		shapes = append(shapes, shape)
+		cumulativeWeight += weight
+		weights = append(weights, cumulativeWeight)
+	}
+
+	// Generate a random number between 0 and the total weight
+	randNum := randSrc.Float64() * cumulativeWeight
+
+	// Find the shape corresponding to the random number
+	for i, weight := range weights {
+		if randNum < weight {
+			return shapes[i]
+		}
+	}
+
+	// Default to the first shape if something goes wrong
+	return shapes[0]
 }
 
 // getBuildingPixels determines the pixels for a single building based on its shape and checks for collisions.

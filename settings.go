@@ -45,6 +45,9 @@ type Settings struct {
 	BuildingDistribution float64 `json:"building_distribution"`
 	BuildingShape        string  `json:"building_shape"`
 
+	// Ratios for mixed building shapes
+	BuildingShapeRatios map[string]float64 `json:"building_shape_ratios"`
+
 	// General settings
 	Seed           int64  `json:"seed"`
 	LastExportPath string `json:"last_export_path"`
@@ -123,8 +126,13 @@ func LoadSettings() (*Settings, error) {
 				MinBuildingSize:      10,
 				MaxBuildingSize:      30,
 				BuildingDistribution: 20,
-				BuildingShape:        "squares",
-				LastExportPath:       homeDir,
+				BuildingShape:        "mixed",
+				BuildingShapeRatios: map[string]float64{
+					"squares":    40,
+					"circles":    30,
+					"rectangles": 30,
+				},
+				LastExportPath: homeDir,
 			}, nil
 		}
 		return nil, err
@@ -136,6 +144,15 @@ func LoadSettings() (*Settings, error) {
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&settings); err != nil {
 		return nil, err
+	}
+
+	// Ensure BuildingShapeRatios is initialized
+	if settings.BuildingShapeRatios == nil {
+		settings.BuildingShapeRatios = map[string]float64{
+			"squares":    40,
+			"circles":    30,
+			"rectangles": 30,
+		}
 	}
 
 	// Ensure LastExportPath is set to a default value if it's empty

@@ -650,10 +650,146 @@ func main() {
 	buildingDistributionSlider.SetValue(settings.BuildingDistribution)
 
 	buildingShapeLabel := widget.NewLabel("Building Shape:")
-	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles"}, func(s string) {
+	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles", "mixed"}, func(s string) {
 		settings.BuildingShape = s
 	})
 	buildingShapeSelect.SetSelected(settings.BuildingShape)
+
+	// Create sliders for building shape ratios (visible only when "mixed" is selected)
+	squareRatioSlider := widget.NewSlider(0, 100)
+	circleRatioSlider := widget.NewSlider(0, 100)
+	rectangleRatioSlider := widget.NewSlider(0, 100)
+
+	squareRatioLabel := widget.NewLabel(fmt.Sprintf("Squares: %.0f%%", settings.BuildingShapeRatios["squares"]))
+	circleRatioLabel := widget.NewLabel(fmt.Sprintf("Circles: %.0f%%", settings.BuildingShapeRatios["circles"]))
+	rectangleRatioLabel := widget.NewLabel(fmt.Sprintf("Rectangles: %.0f%%", settings.BuildingShapeRatios["rectangles"]))
+
+	squareRatioSlider.SetValue(settings.BuildingShapeRatios["squares"])
+	circleRatioSlider.SetValue(settings.BuildingShapeRatios["circles"])
+	rectangleRatioSlider.SetValue(settings.BuildingShapeRatios["rectangles"])
+
+	ratioContainer := container.NewVBox(
+		squareRatioLabel,
+		squareRatioSlider,
+		circleRatioLabel,
+		circleRatioSlider,
+		rectangleRatioLabel,
+		rectangleRatioSlider,
+	)
+
+	updateRatioSliders := func() {
+		squareRatioSlider.SetValue(settings.BuildingShapeRatios["squares"])
+		circleRatioSlider.SetValue(settings.BuildingShapeRatios["circles"])
+		rectangleRatioSlider.SetValue(settings.BuildingShapeRatios["rectangles"])
+		squareRatioLabel.SetText(fmt.Sprintf("Squares: %.0f%%", settings.BuildingShapeRatios["squares"]))
+		circleRatioLabel.SetText(fmt.Sprintf("Circles: %.0f%%", settings.BuildingShapeRatios["circles"]))
+		rectangleRatioLabel.SetText(fmt.Sprintf("Rectangles: %.0f%%", settings.BuildingShapeRatios["rectangles"]))
+	}
+
+	squareRatioSlider.OnChanged = func(val float64) {
+		if settings.BuildingShape != "mixed" {
+			return
+		}
+		oldVal := settings.BuildingShapeRatios["squares"]
+		diff := val - oldVal
+		settings.BuildingShapeRatios["squares"] = val
+		settings.BuildingShapeRatios["circles"] -= diff / 2
+		settings.BuildingShapeRatios["rectangles"] -= diff / 2
+
+		// Clamp values to 0-100 range
+		if settings.BuildingShapeRatios["circles"] < 0 {
+			settings.BuildingShapeRatios["rectangles"] += settings.BuildingShapeRatios["circles"]
+			settings.BuildingShapeRatios["circles"] = 0
+		}
+		if settings.BuildingShapeRatios["rectangles"] < 0 {
+			settings.BuildingShapeRatios["circles"] += settings.BuildingShapeRatios["rectangles"]
+			settings.BuildingShapeRatios["rectangles"] = 0
+		}
+		if settings.BuildingShapeRatios["circles"] > 100 {
+			settings.BuildingShapeRatios["rectangles"] += settings.BuildingShapeRatios["circles"] - 100
+			settings.BuildingShapeRatios["circles"] = 100
+		}
+		if settings.BuildingShapeRatios["rectangles"] > 100 {
+			settings.BuildingShapeRatios["circles"] += settings.BuildingShapeRatios["rectangles"] - 100
+			settings.BuildingShapeRatios["rectangles"] = 100
+		}
+
+		updateRatioSliders()
+	}
+
+	circleRatioSlider.OnChanged = func(val float64) {
+		if settings.BuildingShape != "mixed" {
+			return
+		}
+		oldVal := settings.BuildingShapeRatios["circles"]
+		diff := val - oldVal
+		settings.BuildingShapeRatios["circles"] = val
+		settings.BuildingShapeRatios["squares"] -= diff / 2
+		settings.BuildingShapeRatios["rectangles"] -= diff / 2
+		// Clamp values to 0-100 range
+		if settings.BuildingShapeRatios["squares"] < 0 {
+			settings.BuildingShapeRatios["rectangles"] += settings.BuildingShapeRatios["squares"]
+			settings.BuildingShapeRatios["squares"] = 0
+		}
+		if settings.BuildingShapeRatios["rectangles"] < 0 {
+			settings.BuildingShapeRatios["squares"] += settings.BuildingShapeRatios["rectangles"]
+			settings.BuildingShapeRatios["rectangles"] = 0
+		}
+		if settings.BuildingShapeRatios["squares"] > 100 {
+			settings.BuildingShapeRatios["rectangles"] += settings.BuildingShapeRatios["squares"] - 100
+			settings.BuildingShapeRatios["squares"] = 100
+		}
+		if settings.BuildingShapeRatios["rectangles"] > 100 {
+			settings.BuildingShapeRatios["squares"] += settings.BuildingShapeRatios["rectangles"] - 100
+			settings.BuildingShapeRatios["rectangles"] = 100
+		}
+
+		updateRatioSliders()
+	}
+
+	rectangleRatioSlider.OnChanged = func(val float64) {
+		if settings.BuildingShape != "mixed" {
+			return
+		}
+		oldVal := settings.BuildingShapeRatios["rectangles"]
+		diff := val - oldVal
+		settings.BuildingShapeRatios["rectangles"] = val
+		settings.BuildingShapeRatios["squares"] -= diff / 2
+		settings.BuildingShapeRatios["circles"] -= diff / 2
+
+		// Clamp values to 0-100 range
+		if settings.BuildingShapeRatios["squares"] < 0 {
+			settings.BuildingShapeRatios["circles"] += settings.BuildingShapeRatios["squares"]
+			settings.BuildingShapeRatios["squares"] = 0
+		}
+		if settings.BuildingShapeRatios["circles"] < 0 {
+			settings.BuildingShapeRatios["squares"] += settings.BuildingShapeRatios["circles"]
+			settings.BuildingShapeRatios["circles"] = 0
+		}
+		if settings.BuildingShapeRatios["squares"] > 100 {
+			settings.BuildingShapeRatios["circles"] += settings.BuildingShapeRatios["squares"] - 100
+			settings.BuildingShapeRatios["squares"] = 100
+		}
+		if settings.BuildingShapeRatios["circles"] > 100 {
+			settings.BuildingShapeRatios["squares"] += settings.BuildingShapeRatios["circles"] - 100
+			settings.BuildingShapeRatios["circles"] = 100
+		}
+
+		updateRatioSliders()
+	}
+
+	buildingShapeSelect.OnChanged = func(s string) {
+		settings.BuildingShape = s
+		if s == "mixed" {
+			ratioContainer.Show()
+		} else {
+			ratioContainer.Hide()
+		}
+	}
+	// Initial visibility check
+	if settings.BuildingShape != "mixed" {
+		ratioContainer.Hide()
+	}
 
 	buildingsTab := container.NewTabItem("Buildings", container.NewVBox(
 		numBuildingsLabel,
@@ -666,6 +802,7 @@ func main() {
 		buildingDistributionSlider,
 		buildingShapeLabel,
 		buildingShapeSelect,
+		ratioContainer,
 	))
 
 	imageTab := container.NewTabItem("Image", container.NewVBox(
