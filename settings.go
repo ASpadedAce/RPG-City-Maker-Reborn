@@ -48,6 +48,11 @@ type Settings struct {
 	// Ratios for mixed building shapes
 	BuildingShapeRatios map[string]float64 `json:"building_shape_ratios"`
 
+	// Procedural building settings
+	MinBuildingComplexity   int     `json:"min_building_complexity"`
+	MaxBuildingComplexity   int     `json:"max_building_complexity"`
+	BuildingComplexityRatio float64 `json:"building_complexity_ratio"`
+
 	// General settings
 	Seed           int64  `json:"seed"`
 	LastExportPath string `json:"last_export_path"`
@@ -132,7 +137,10 @@ func LoadSettings() (*Settings, error) {
 					"circles":    30,
 					"rectangles": 30,
 				},
-				LastExportPath: homeDir,
+				MinBuildingComplexity:   1,
+				MaxBuildingComplexity:   3,
+				BuildingComplexityRatio: 50,
+				LastExportPath:          homeDir,
 			}, nil
 		}
 		return nil, err
@@ -153,6 +161,17 @@ func LoadSettings() (*Settings, error) {
 			"circles":    30,
 			"rectangles": 30,
 		}
+	}
+
+	// Ensure procedural building settings are initialized
+	if settings.MinBuildingComplexity == 0 {
+		settings.MinBuildingComplexity = 1
+	}
+	if settings.MaxBuildingComplexity == 0 {
+		settings.MaxBuildingComplexity = 3
+	}
+	if settings.BuildingComplexityRatio == 0 {
+		settings.BuildingComplexityRatio = 50
 	}
 
 	// Ensure LastExportPath is set to a default value if it's empty

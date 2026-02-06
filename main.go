@@ -650,7 +650,7 @@ func main() {
 	buildingDistributionSlider.SetValue(settings.BuildingDistribution)
 
 	buildingShapeLabel := widget.NewLabel("Building Shape:")
-	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles", "mixed"}, func(s string) {
+	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles", "mixed", "procedural"}, func(s string) {
 		settings.BuildingShape = s
 	})
 	buildingShapeSelect.SetSelected(settings.BuildingShape)
@@ -677,6 +677,46 @@ func main() {
 		rectangleRatioSlider,
 	)
 
+	// Create sliders for procedural building complexity
+	minBuildingComplexityLabel := widget.NewLabel(fmt.Sprintf("Min Building Complexity: %d", settings.MinBuildingComplexity))
+	minBuildingComplexitySlider := widget.NewSlider(1, 6)
+	minBuildingComplexitySlider.OnChanged = func(val float64) {
+		settings.MinBuildingComplexity = int(val)
+		if float64(settings.MinBuildingComplexity) > float64(settings.MaxBuildingComplexity) {
+			settings.MaxBuildingComplexity = settings.MinBuildingComplexity
+		}
+		minBuildingComplexityLabel.SetText(fmt.Sprintf("Min Building Complexity: %d", settings.MinBuildingComplexity))
+	}
+	minBuildingComplexitySlider.SetValue(float64(settings.MinBuildingComplexity))
+
+	maxBuildingComplexityLabel := widget.NewLabel(fmt.Sprintf("Max Building Complexity: %d", settings.MaxBuildingComplexity))
+	maxBuildingComplexitySlider := widget.NewSlider(1, 6)
+	maxBuildingComplexitySlider.OnChanged = func(val float64) {
+		settings.MaxBuildingComplexity = int(val)
+		if float64(settings.MaxBuildingComplexity) < float64(settings.MinBuildingComplexity) {
+			settings.MinBuildingComplexity = settings.MaxBuildingComplexity
+		}
+		maxBuildingComplexityLabel.SetText(fmt.Sprintf("Max Building Complexity: %d", settings.MaxBuildingComplexity))
+	}
+	maxBuildingComplexitySlider.SetValue(float64(settings.MaxBuildingComplexity))
+
+	buildingComplexityRatioLabel := widget.NewLabel(fmt.Sprintf("Building Complexity Ratio: %.0f%%", settings.BuildingComplexityRatio))
+	buildingComplexityRatioSlider := widget.NewSlider(0, 100)
+	buildingComplexityRatioSlider.OnChanged = func(val float64) {
+		settings.BuildingComplexityRatio = val
+		buildingComplexityRatioLabel.SetText(fmt.Sprintf("Building Complexity Ratio: %.0f%%", settings.BuildingComplexityRatio))
+	}
+	buildingComplexityRatioSlider.SetValue(settings.BuildingComplexityRatio)
+
+	proceduralContainer := container.NewVBox(
+		minBuildingComplexityLabel,
+		minBuildingComplexitySlider,
+		maxBuildingComplexityLabel,
+		maxBuildingComplexitySlider,
+		buildingComplexityRatioLabel,
+		buildingComplexityRatioSlider,
+	)
+
 	updateRatioSliders := func() {
 		squareRatioSlider.SetValue(settings.BuildingShapeRatios["squares"])
 		circleRatioSlider.SetValue(settings.BuildingShapeRatios["circles"])
@@ -687,7 +727,7 @@ func main() {
 	}
 
 	squareRatioSlider.OnChanged = func(val float64) {
-		if settings.BuildingShape != "mixed" {
+		if settings.BuildingShape != "mixed" && settings.BuildingShape != "procedural" {
 			return
 		}
 		oldVal := settings.BuildingShapeRatios["squares"]
@@ -718,7 +758,7 @@ func main() {
 	}
 
 	circleRatioSlider.OnChanged = func(val float64) {
-		if settings.BuildingShape != "mixed" {
+		if settings.BuildingShape != "mixed" && settings.BuildingShape != "procedural" {
 			return
 		}
 		oldVal := settings.BuildingShapeRatios["circles"]
@@ -748,7 +788,7 @@ func main() {
 	}
 
 	rectangleRatioSlider.OnChanged = func(val float64) {
-		if settings.BuildingShape != "mixed" {
+		if settings.BuildingShape != "mixed" && settings.BuildingShape != "procedural" {
 			return
 		}
 		oldVal := settings.BuildingShapeRatios["rectangles"]
@@ -781,13 +821,25 @@ func main() {
 	buildingShapeSelect.OnChanged = func(s string) {
 		settings.BuildingShape = s
 		if s == "mixed" {
+			proceduralContainer.Hide()
+			ratioContainer.Show()
+		} else if s == "procedural" {
+			proceduralContainer.Show()
 			ratioContainer.Show()
 		} else {
+			proceduralContainer.Hide()
 			ratioContainer.Hide()
 		}
 	}
 	// Initial visibility check
-	if settings.BuildingShape != "mixed" {
+	if settings.BuildingShape == "mixed" {
+		proceduralContainer.Hide()
+		ratioContainer.Show()
+	} else if settings.BuildingShape == "procedural" {
+		proceduralContainer.Show()
+		ratioContainer.Show()
+	} else {
+		proceduralContainer.Hide()
 		ratioContainer.Hide()
 	}
 
@@ -802,6 +854,7 @@ func main() {
 		buildingDistributionSlider,
 		buildingShapeLabel,
 		buildingShapeSelect,
+		proceduralContainer,
 		ratioContainer,
 	))
 
