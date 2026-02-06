@@ -187,8 +187,8 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	noise := opensimplex.New(seed)
 	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
 	treeNoiseZoom := 0.05
-	for y := range height {
-		for x := range width {
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
 			val := noise.Eval2(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
 			val = (val + 1) / 2 // Normalize to 0-1
 			treeNoiseMap.SetGray(x, y, color.Gray{Y: uint8(val * 255)})
@@ -250,6 +250,9 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 
 	for i := 0; i < numGoroutines; i++ {
 		start := i * pointsPerGoroutine
+		if start >= len(allPoints) {
+			break
+		}
 		end := start + pointsPerGoroutine
 		if end > len(allPoints) {
 			end = len(allPoints)
