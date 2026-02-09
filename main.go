@@ -421,7 +421,7 @@ func main() {
 		showSaveDialog(w, bumpmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels, buildings)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels, buildings)
 	})
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
@@ -975,7 +975,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point, buildings [][]image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point, buildings [][]image.Point) {
 	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
@@ -1056,6 +1056,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 		imagesToSave := map[string]image.Image{
 			"canvas." + imgFormat:         canvasImg,
 			"heightmap." + imgFormat:      heightmapImg,
+			"bump_map." + imgFormat:       bumpmapImg,
 			"lakes_mask." + imgFormat:     lakeMask,
 			"rivers_mask." + imgFormat:    riverMask,
 			"trees_mask." + imgFormat:     treeMask,
