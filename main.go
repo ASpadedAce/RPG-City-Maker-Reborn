@@ -55,6 +55,7 @@ func main() {
 	var riverPixels []image.Point
 	var treePixels []image.Point
 	var buildingPixels []image.Point
+	var buildings [][]image.Point
 	var roadPixels []image.Point
 	var bridgePixels []image.Point
 
@@ -159,7 +160,7 @@ func main() {
 		}
 
 		// Step 5: Generating Buildings
-		buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+		buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
 
 		// Step 6: Generating Trees
 		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
@@ -167,10 +168,13 @@ func main() {
 		// Step 7: Darkening Water Areas
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
-		// Step 8: Flattening Road Areas
-		flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
+		// Step 8: Flattening Building Areas
+		flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
-		// Step 9: Applying Roughness
+		// Step 9: Flattening Road Areas
+		flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
+
+		// Step 10: Applying Roughness
 		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 		heightmapImg.Image = compositeImg
@@ -385,7 +389,7 @@ func main() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels, buildings)
 	})
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
@@ -401,7 +405,7 @@ func main() {
 				})
 			}()
 			// Set up progress bar
-			steps := 9
+			steps := 10
 			currentStep := 0
 
 			seedProvider := NewSeedProvider(settings.Seed)
@@ -462,7 +466,7 @@ func main() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Buildings", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
-			buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+			buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
 
 			// Step 6: Darkening Water Areas
 			currentStep++
@@ -471,9 +475,18 @@ func main() {
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
-			flattenedHeightmap := FlattenRoadAreas(darkenedHeightmap, roadPixels)
 
-			// Step 7: Applying Roughness
+			// Step 7: Flattening Building Areas
+			currentStep++
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Flattening Building Areas", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
+			flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
+
+			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
+
+			// Step 8: Applying Roughness
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
@@ -481,7 +494,7 @@ func main() {
 			})
 			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
-			// Step 8: Generating Trees
+			// Step 9: Generating Trees
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
@@ -489,7 +502,7 @@ func main() {
 			})
 			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
-			// Step 9: Finalizing Images
+			// Step 10: Finalizing Images
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
@@ -918,7 +931,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point, buildings [][]image.Point) {
 	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
@@ -990,8 +1003,10 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg image.Image, s
 			bridgeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 		}
 		buildingMask := image.NewGray(bounds)
-		for _, p := range buildingPixels {
-			buildingMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		for _, building := range buildings {
+			for _, p := range building {
+				buildingMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+			}
 		}
 
 		imagesToSave := map[string]image.Image{

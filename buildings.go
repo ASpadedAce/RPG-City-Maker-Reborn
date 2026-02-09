@@ -6,13 +6,14 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"sync"
 )
 
 // GenerateBuildings creates and places buildings on the map.
-func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, roadPixels, allWaterPixels []image.Point, seed int64) []image.Point {
+func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, roadPixels, allWaterPixels []image.Point, seed int64) ([][]image.Point, []image.Point) {
 	// Early exit if no buildings are to be generated
 	if settings.NumBuildings == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Initialize random number generator
@@ -32,7 +33,8 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 
 	// Initialize building data structures
 	isBuilding := make(map[image.Point]bool)
-	var buildingPixels []image.Point
+	var buildings [][]image.Point
+	var allBuildingPixels []image.Point
 	var anchorPoints []image.Point
 
 	// Determine anchor points for building placement
@@ -52,7 +54,7 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 
 	// Early exit if no anchor points are available
 	if len(anchorPoints) == 0 {
-		return nil
+		return nil, nil
 	}
 	// Sort anchor points for deterministic placement
 	sort.Slice(anchorPoints, func(i, j int) bool {
@@ -137,14 +139,15 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 				for _, p := range pixels {
 					img.Set(p.X, p.Y, buildingColor)
 					isBuilding[p] = true
-					buildingPixels = append(buildingPixels, p)
+					allBuildingPixels = append(allBuildingPixels, p)
 				}
+				buildings = append(buildings, pixels)
 				buildingsPlaced++
 				break // Move to the next building
 			}
 		}
 	}
-	return buildingPixels
+	return buildings, allBuildingPixels
 }
 
 // getProceduralBuildingPixels generates a complex building by connecting multiple shapes.
@@ -432,4 +435,90 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 		return nil, false
 	}
 	return pixels, true
+}
+
+// isPixelInSlice checks if a pixel is already in a slice of pixels.
+func isPixelInSlice(pixel image.Point, pixelSlice []image.Point) bool {
+	for _, p := range pixelSlice {
+		if p == pixel {
+			return true
+		}
+	}
+	return false
+}
+
+// FlattenBuildingAreas flattens the terrain under buildings and blends the surrounding area.
+func FlattenBuildingAreas(heightMap *image.RGBA, buildings [][]image.Point, width, height int) *image.RGBA {
+	if len(buildings) == 0 {
+		return heightMap
+	}
+
+	// Create a copy of the heightmap to avoid modifying the original during processing.
+	newHeightMap := image.NewRGBA(heightMap.Bounds())
+	copy(newHeightMap.Pix, heightMap.Pix)
+
+	// Process each building in parallel.
+	var wg sync.WaitGroup
+	for _, building := range buildings {
+		wg.Add(1)
+		go func(building []image.Point) {
+			defer wg.Done()
+
+			// Calculate the average height of the building area.
+			var totalGray uint32
+			for _, p := range building {
+				gray, _, _, _ := newHeightMap.At(p.X, p.Y).RGBA()
+				totalGray += gray
+			}
+			avgGray := uint8(totalGray / uint32(len(building)) >> 8)
+			avgColor := color.RGBA{R: avgGray, G: avgGray, B: avgGray, A: 255}
+
+			// Flatten the building area.
+			for _, p := range building {
+				newHeightMap.Set(p.X, p.Y, avgColor)
+			}
+
+			// Create a buffer around the building.
+			buffer := make([]image.Point, 0)
+			for _, p := range building {
+				for y := p.Y - 5; y <= p.Y+5; y++ {
+					for x := p.X - 5; x <= p.X+5; x++ {
+						if x >= 0 && x < width && y >= 0 && y < height {
+							candidate := image.Point{X: x, Y: y}
+							if !isPixelInSlice(candidate, building) && !isPixelInSlice(candidate, buffer) {
+								buffer = append(buffer, candidate)
+							}
+						}
+					}
+				}
+			}
+
+			// Blend the buffer.
+			for _, p := range buffer {
+				originalColor := heightMap.At(p.X, p.Y)
+				_, g, _, _ := originalColor.RGBA()
+
+				minDist := math.MaxFloat64
+				for _, bp := range building {
+					dist := math.Sqrt(math.Pow(float64(p.X-bp.X), 2) + math.Pow(float64(p.Y-bp.Y), 2))
+					if dist < minDist {
+						minDist = dist
+					}
+				}
+
+				// Blend based on distance.
+				blendFactor := minDist / 5.0
+				if blendFactor > 1.0 {
+					blendFactor = 1.0
+				}
+
+				newGray := uint8(float64(avgGray)*(1.0-blendFactor) + float64(g>>8)*blendFactor)
+				newColor := color.RGBA{R: newGray, G: newGray, B: newGray, A: 255}
+				newHeightMap.Set(p.X, p.Y, newColor)
+			}
+		}(building)
+	}
+	wg.Wait()
+
+	return newHeightMap
 }
