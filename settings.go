@@ -56,6 +56,7 @@ type Settings struct {
 	// General settings
 	Seed           int64  `json:"seed"`
 	LastExportPath string `json:"last_export_path"`
+	ImageViewState int    `json:"image_view_state"`
 }
 
 // Save saves the current settings to a JSON file in the user's config directory.
@@ -141,6 +142,7 @@ func LoadSettings() (*Settings, error) {
 				MaxBuildingComplexity:   3,
 				BuildingComplexityRatio: 50,
 				LastExportPath:          homeDir,
+				ImageViewState:          0,
 			}, nil
 		}
 		return nil, err

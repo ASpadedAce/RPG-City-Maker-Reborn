@@ -943,11 +943,58 @@ func main() {
 		tabs,
 	)
 
-	right := container.NewGridWithRows(3,
-		canvasImg,
-		heightmapImg,
-		bumpmapImg,
-	)
+	right := container.NewMax()
+	var tappableCanvas, tappableHeightmap, tappableBumpmap *tappableImage
+
+	updateRightPanel := func() {
+		var top, bottom fyne.CanvasObject
+		switch settings.ImageViewState {
+		case 1:
+			top = tappableCanvas
+			bottom = container.NewGridWithColumns(2, tappableHeightmap, tappableBumpmap)
+		case 2:
+			top = tappableHeightmap
+			bottom = container.NewGridWithColumns(2, tappableCanvas, tappableBumpmap)
+		case 3:
+			top = tappableBumpmap
+			bottom = container.NewGridWithColumns(2, tappableCanvas, tappableHeightmap)
+		default:
+			right.Objects = []fyne.CanvasObject{container.NewGridWithRows(3, tappableCanvas, tappableHeightmap, tappableBumpmap)}
+			right.Refresh()
+			return
+		}
+		split := container.NewVSplit(top, bottom)
+		split.Offset = 0.8
+		right.Objects = []fyne.CanvasObject{split}
+		right.Refresh()
+	}
+
+	tappableCanvas = newTappableImage(container.NewMax(canvasImg), func() {
+		if settings.ImageViewState == 1 {
+			settings.ImageViewState = 0
+		} else {
+			settings.ImageViewState = 1
+		}
+		updateRightPanel()
+	})
+	tappableHeightmap = newTappableImage(container.NewMax(heightmapImg), func() {
+		if settings.ImageViewState == 2 {
+			settings.ImageViewState = 0
+		} else {
+			settings.ImageViewState = 2
+		}
+		updateRightPanel()
+	})
+	tappableBumpmap = newTappableImage(container.NewMax(bumpmapImg), func() {
+		if settings.ImageViewState == 3 {
+			settings.ImageViewState = 0
+		} else {
+			settings.ImageViewState = 3
+		}
+		updateRightPanel()
+	})
+
+	updateRightPanel()
 
 	split := container.NewHSplit(
 		left,
