@@ -49,6 +49,9 @@ func main() {
 	heightmapImg := &canvas.Image{
 		FillMode: canvas.ImageFillContain,
 	}
+	bumpmapImg := &canvas.Image{
+		FillMode: canvas.ImageFillContain,
+	}
 
 	// Initialize slices to store generated map features
 	var lakes [][]image.Point
@@ -67,6 +70,7 @@ func main() {
 	appConfigDir := filepath.Join(configDir, "rpgcitymakerreborn")
 	canvasPath := filepath.Join(appConfigDir, "canvas.png")
 	heightmapPath := filepath.Join(appConfigDir, "heightmap.png")
+	bumpmapPath := filepath.Join(appConfigDir, "bumpmap.png")
 
 	// Save settings and images on window close
 	w.SetOnClosed(func() {
@@ -97,6 +101,18 @@ func main() {
 				}
 			}
 		}
+
+		if bumpmapImg.Image != nil {
+			bumpmapFile, err := os.Create(bumpmapPath)
+			if err != nil {
+				log.Println("Failed to create bumpmap file:", err)
+			} else {
+				defer bumpmapFile.Close()
+				if err := png.Encode(bumpmapFile, bumpmapImg.Image); err != nil {
+					log.Println("Failed to encode bumpmap image:", err)
+				}
+			}
+		}
 	})
 
 	// Load previously saved images
@@ -115,6 +131,15 @@ func main() {
 		img, err := png.Decode(heightmapFile)
 		if err == nil {
 			heightmapImg.Image = img
+		}
+	}
+
+	bumpmapFile, err := os.Open(bumpmapPath)
+	if err == nil {
+		defer bumpmapFile.Close()
+		img, err := png.Decode(bumpmapFile)
+		if err == nil {
+			bumpmapImg.Image = img
 		}
 	}
 
@@ -177,7 +202,11 @@ func main() {
 		// Step 10: Applying Roughness
 		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
+		// Step 11: Generating Bump Map
+		bumpMap := GenerateBumpMap(compositeImg.(*image.RGBA), settings.Width, settings.Height, 0.10)
+
 		heightmapImg.Image = compositeImg
+		bumpmapImg.Image = bumpMap
 
 		canvasImg.Image = finalImage
 
@@ -388,6 +417,9 @@ func main() {
 	exportHeightmapBtn := widget.NewButton("Export Heightmap", func() {
 		showSaveDialog(w, heightmapImg.Image, settings)
 	})
+	exportBumpmapBtn := widget.NewButton("Export Bump Map", func() {
+		showSaveDialog(w, bumpmapImg.Image, settings)
+	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
 		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels, buildings)
 	})
@@ -502,13 +534,23 @@ func main() {
 			})
 			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
-			// Step 10: Finalizing Images
+			// Step 10: Generating Bump Map
+			currentStep++
+			fyne.Do(func() {
+				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Bump Map", currentStep, steps))
+				progressBar.SetValue(float64(currentStep) / float64(steps))
+			})
+			bumpMap := GenerateBumpMap(compositeImg.(*image.RGBA), settings.Width, settings.Height, 0.10)
+
+			// Step 11: Finalizing Images
 			currentStep++
 			fyne.Do(func() {
 				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
 				progressBar.SetValue(float64(currentStep) / float64(steps))
 				heightmapImg.Image = compositeImg
 				heightmapImg.Refresh()
+				bumpmapImg.Image = bumpMap
+				bumpmapImg.Refresh()
 				canvasImg.Image = finalImage
 				canvasImg.Refresh()
 
@@ -884,6 +926,7 @@ func main() {
 		widget.NewSeparator(),
 		exportCanvasBtn,
 		exportHeightmapBtn,
+		exportBumpmapBtn,
 		exportMasksBtn,
 	))
 	// Create the main layout using a horizontal split
@@ -900,9 +943,10 @@ func main() {
 		tabs,
 	)
 
-	right := container.NewGridWithRows(2,
+	right := container.NewGridWithRows(3,
 		canvasImg,
 		heightmapImg,
+		bumpmapImg,
 	)
 
 	split := container.NewHSplit(
