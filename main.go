@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
@@ -30,7 +31,6 @@ import (
 func main() {
 	// Initialize the Fyne application and window
 	a := app.NewWithID("com.example.rpgcitymaker")
-	a.Settings().SetTheme(&CustomTheme{a.Settings().Theme()})
 	w := a.NewWindow("RPG City Maker")
 	w.Resize(fyne.NewSize(800, 600))
 
@@ -211,206 +211,258 @@ func main() {
 		canvasImg.Image = finalImage
 
 	}
-	// Create UI elements for controlling terrain generation settings
-	detailLabel := widget.NewLabel(fmt.Sprintf("Detail: %.0f", settings.Detail))
-	detailSlider := widget.NewSlider(1, 16)
-	detailSlider.OnChanged = func(val float64) {
+	var generateBtn *widget.Button
+	errorStates := make(map[string]bool)
+
+	// ... (other code)
+
+	// Main generation button and logic
+	generateBtn = widget.NewButton("Generate", func() {
+		// ... (generation logic)
+	})
+
+	// Function to update the generate button state
+	updateGenerateBtnState := func() {
+		for _, hasError := range errorStates {
+			if hasError {
+				generateBtn.Disable()
+				return
+			}
+		}
+		generateBtn.Enable()
+	}
+
+	detailSlider := newNumericInputSlider(1, 16, settings.Detail, "%.0f", "Detail")
+	detailSlider.entry.OnChanged = func(s string) {
+		detailSlider.validate(s, func(hasError bool) {
+			errorStates["detail"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	detailSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := detailSlider.value.Get()
 		settings.Detail = val
-		detailLabel.SetText(fmt.Sprintf("Detail: %.0f", settings.Detail))
-	}
-	detailSlider.SetValue(settings.Detail)
+	}))
 
-	roughnessLabel := widget.NewLabel(fmt.Sprintf("Roughness: %.0f%%", settings.Roughness))
-	roughnessSlider := widget.NewSlider(0, 100)
-	roughnessSlider.OnChanged = func(val float64) {
+	roughnessSlider := newNumericInputSlider(0, 100, settings.Roughness, "%.0f%%", "Roughness")
+	roughnessSlider.entry.OnChanged = func(s string) {
+		roughnessSlider.validate(s, func(hasError bool) {
+			errorStates["roughness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	roughnessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := roughnessSlider.value.Get()
 		settings.Roughness = val
-		roughnessLabel.SetText(fmt.Sprintf("Roughness: %.0f%%", settings.Roughness))
-	}
-	roughnessSlider.SetValue(settings.Roughness)
+	}))
 	// Create UI elements for controlling lake generation settings
-	lakesLabel := widget.NewLabel(fmt.Sprintf("Lakes: %d", settings.Lakes))
-	lakesSlider := widget.NewSlider(0, 15)
-	lakesSlider.OnChanged = func(val float64) {
+	lakesSlider := newNumericInputSlider(0, 15, float64(settings.Lakes), "%.0f", "Lakes")
+	lakesSlider.entry.OnChanged = func(s string) {
+		lakesSlider.validate(s, func(hasError bool) {
+			errorStates["lakes"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	lakesSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := lakesSlider.value.Get()
 		settings.Lakes = int(val)
-		lakesLabel.SetText(fmt.Sprintf("Lakes: %d", settings.Lakes))
+	}))
+
+	lakeSizeLowerSlider := newNumericInputSlider(1, 100, settings.LakeSizeLower, "%.0f%%", "Min Lake Size")
+	lakeSizeLowerSlider.entry.OnChanged = func(s string) {
+		lakeSizeLowerSlider.validate(s, func(hasError bool) {
+			errorStates["lakeSizeLower"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	lakesSlider.SetValue(float64(settings.Lakes))
-
-	lakeSizeLowerLabel := widget.NewLabel(fmt.Sprintf("Min Lake Size: %.0f%%", settings.LakeSizeLower))
-	lakeSizeLowerSlider := widget.NewSlider(1, 100)
-	lakeSizeUpperLabel := widget.NewLabel(fmt.Sprintf("Max Lake Size: %.0f%%", settings.LakeSizeUpper))
-	lakeSizeUpperSlider := widget.NewSlider(1, 100)
-
-	lakeSizeLowerSlider.OnChanged = func(val float64) {
+	lakeSizeLowerSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := lakeSizeLowerSlider.value.Get()
 		settings.LakeSizeLower = val
-		if settings.LakeSizeLower > settings.LakeSizeUpper {
-			settings.LakeSizeUpper = settings.LakeSizeLower
-			lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
-		}
-		lakeSizeLowerLabel.SetText(fmt.Sprintf("Min Lake Size: %.0f%%", settings.LakeSizeLower))
-	}
-	lakeSizeLowerSlider.SetValue(settings.LakeSizeLower)
+	}))
 
-	lakeSizeUpperSlider.OnChanged = func(val float64) {
+	lakeSizeUpperSlider := newNumericInputSlider(1, 100, settings.LakeSizeUpper, "%.0f%%", "Max Lake Size")
+	lakeSizeUpperSlider.entry.OnChanged = func(s string) {
+		lakeSizeUpperSlider.validate(s, func(hasError bool) {
+			errorStates["lakeSizeUpper"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	lakeSizeUpperSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := lakeSizeUpperSlider.value.Get()
 		settings.LakeSizeUpper = val
-		if settings.LakeSizeUpper < settings.LakeSizeLower {
-			settings.LakeSizeLower = settings.LakeSizeUpper
-			lakeSizeLowerSlider.SetValue(settings.LakeSizeLower)
-		}
-		lakeSizeUpperLabel.SetText(fmt.Sprintf("Max Lake Size: %.0f%%", settings.LakeSizeUpper))
+	}))
+	riversSlider := newNumericInputSlider(0, 5, float64(settings.Rivers), "%.0f", "Rivers")
+	riversSlider.entry.OnChanged = func(s string) {
+		riversSlider.validate(s, func(hasError bool) {
+			errorStates["rivers"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	lakeSizeUpperSlider.SetValue(settings.LakeSizeUpper)
-	// Create UI elements for controlling river generation settings
-	riversLabel := widget.NewLabel(fmt.Sprintf("Rivers: %d", settings.Rivers))
-	riversSlider := widget.NewSlider(0, 5)
-	riversSlider.OnChanged = func(val float64) {
+	riversSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := riversSlider.value.Get()
 		settings.Rivers = int(val)
-		riversLabel.SetText(fmt.Sprintf("Rivers: %d", settings.Rivers))
+	}))
+
+	minRiverWidthSlider := newNumericInputSlider(1, 100, settings.MinRiverWidth, "%.0f%%", "Min River Width")
+	minRiverWidthSlider.entry.OnChanged = func(s string) {
+		minRiverWidthSlider.validate(s, func(hasError bool) {
+			errorStates["minRiverWidth"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	riversSlider.SetValue(float64(settings.Rivers))
-
-	minRiverWidthLabel := widget.NewLabel(fmt.Sprintf("Min River Width: %.0f%%", settings.MinRiverWidth))
-	minRiverWidthSlider := widget.NewSlider(1, 100)
-	maxRiverWidthLabel := widget.NewLabel(fmt.Sprintf("Max River Width: %.0f%%", settings.MaxRiverWidth))
-	maxRiverWidthSlider := widget.NewSlider(1, 100)
-
-	minRiverWidthSlider.OnChanged = func(val float64) {
+	minRiverWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minRiverWidthSlider.value.Get()
 		settings.MinRiverWidth = val
-		if settings.MinRiverWidth > settings.MaxRiverWidth {
-			settings.MaxRiverWidth = settings.MinRiverWidth
-			maxRiverWidthSlider.SetValue(settings.MaxRiverWidth)
-		}
-		minRiverWidthLabel.SetText(fmt.Sprintf("Min River Width: %.0f%%", settings.MinRiverWidth))
-	}
-	minRiverWidthSlider.SetValue(settings.MinRiverWidth)
+	}))
 
-	maxRiverWidthSlider.OnChanged = func(val float64) {
+	maxRiverWidthSlider := newNumericInputSlider(1, 100, settings.MaxRiverWidth, "%.0f%%", "Max River Width")
+	maxRiverWidthSlider.entry.OnChanged = func(s string) {
+		maxRiverWidthSlider.validate(s, func(hasError bool) {
+			errorStates["maxRiverWidth"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxRiverWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxRiverWidthSlider.value.Get()
 		settings.MaxRiverWidth = val
-		if settings.MaxRiverWidth < settings.MinRiverWidth {
-			settings.MinRiverWidth = settings.MaxRiverWidth
-			minRiverWidthSlider.SetValue(settings.MinRiverWidth)
-		}
-		maxRiverWidthLabel.SetText(fmt.Sprintf("Max River Width: %.0f%%", settings.MaxRiverWidth))
-	}
-	maxRiverWidthSlider.SetValue(settings.MaxRiverWidth)
+	}))
 
-	riverCurvynessLabel := widget.NewLabel(fmt.Sprintf("River Curvyness: %.0f%%", settings.RiverCurvyness))
-	riverCurvynessSlider := widget.NewSlider(0, 100)
-	riverCurvynessSlider.OnChanged = func(val float64) {
+	riverCurvynessSlider := newNumericInputSlider(0, 100, settings.RiverCurvyness, "%.0f%%", "River Curvyness")
+	riverCurvynessSlider.entry.OnChanged = func(s string) {
+		riverCurvynessSlider.validate(s, func(hasError bool) {
+			errorStates["riverCurvyness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	riverCurvynessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := riverCurvynessSlider.value.Get()
 		settings.RiverCurvyness = val
-		riverCurvynessLabel.SetText(fmt.Sprintf("River Curvyness: %.0f%%", settings.RiverCurvyness))
+	}))
+	minTreeSizeSlider := newNumericInputSlider(1, 150, settings.MinTreeSize, "%.0fpx", "Min Tree Size")
+	minTreeSizeSlider.entry.OnChanged = func(s string) {
+		minTreeSizeSlider.validate(s, func(hasError bool) {
+			errorStates["minTreeSize"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	riverCurvynessSlider.SetValue(settings.RiverCurvyness)
-	// Create UI elements for controlling tree generation settings
-	minTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
-	minTreeSizeSlider := widget.NewSlider(1, 150)
-	maxTreeSizeLabel := widget.NewLabel(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
-	maxTreeSizeSlider := widget.NewSlider(1, 150)
-
-	minTreeSizeSlider.OnChanged = func(val float64) {
+	minTreeSizeSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minTreeSizeSlider.value.Get()
 		settings.MinTreeSize = val
-		if settings.MinTreeSize > settings.MaxTreeSize {
-			settings.MaxTreeSize = settings.MinTreeSize
-			maxTreeSizeSlider.SetValue(settings.MaxTreeSize)
-		}
-		minTreeSizeLabel.SetText(fmt.Sprintf("Min Tree Size: %.0fpx", settings.MinTreeSize))
-	}
-	minTreeSizeSlider.SetValue(settings.MinTreeSize)
+	}))
 
-	maxTreeSizeSlider.OnChanged = func(val float64) {
+	maxTreeSizeSlider := newNumericInputSlider(1, 150, settings.MaxTreeSize, "%.0fpx", "Max Tree Size")
+	maxTreeSizeSlider.entry.OnChanged = func(s string) {
+		maxTreeSizeSlider.validate(s, func(hasError bool) {
+			errorStates["maxTreeSize"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxTreeSizeSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxTreeSizeSlider.value.Get()
 		settings.MaxTreeSize = val
-		if settings.MaxTreeSize < settings.MinTreeSize {
-			settings.MinTreeSize = settings.MaxTreeSize
-			minTreeSizeSlider.SetValue(settings.MinTreeSize)
-		}
-		maxTreeSizeLabel.SetText(fmt.Sprintf("Max Tree Size: %.0fpx", settings.MaxTreeSize))
-	}
-	maxTreeSizeSlider.SetValue(settings.MaxTreeSize)
+	}))
 
-	treeCoverageLabel := widget.NewLabel(fmt.Sprintf("Tree Coverage: %.0f%%", settings.TreeCoverage))
-	treeCoverageSlider := widget.NewSlider(1, 100)
-	treeCoverageSlider.OnChanged = func(val float64) {
+	treeCoverageSlider := newNumericInputSlider(1, 100, settings.TreeCoverage, "%.0f%%", "Tree Coverage")
+	treeCoverageSlider.entry.OnChanged = func(s string) {
+		treeCoverageSlider.validate(s, func(hasError bool) {
+			errorStates["treeCoverage"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	treeCoverageSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := treeCoverageSlider.value.Get()
 		settings.TreeCoverage = val
-		treeCoverageLabel.SetText(fmt.Sprintf("Tree Coverage: %.0f%%", settings.TreeCoverage))
-	}
-	treeCoverageSlider.SetValue(settings.TreeCoverage)
+	}))
 
-	treeClumpinessLabel := widget.NewLabel(fmt.Sprintf("Tree Clumpiness: %.0f%%", settings.TreeClumpiness))
-	treeClumpinessSlider := widget.NewSlider(0, 100)
-	treeClumpinessSlider.OnChanged = func(val float64) {
+	treeClumpinessSlider := newNumericInputSlider(0, 100, settings.TreeClumpiness, "%.0f%%", "Tree Clumpiness")
+	treeClumpinessSlider.entry.OnChanged = func(s string) {
+		treeClumpinessSlider.validate(s, func(hasError bool) {
+			errorStates["treeClumpiness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	treeClumpinessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := treeClumpinessSlider.value.Get()
 		settings.TreeClumpiness = val
-		treeClumpinessLabel.SetText(fmt.Sprintf("Tree Clumpiness: %.0f%%", settings.TreeClumpiness))
+	}))
+	numRoadsSlider := newNumericInputSlider(0, 2000, float64(settings.NumRoads), "%.0f", "Number of Roads")
+	numRoadsSlider.entry.OnChanged = func(s string) {
+		numRoadsSlider.validate(s, func(hasError bool) {
+			errorStates["numRoads"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	treeClumpinessSlider.SetValue(settings.TreeClumpiness)
-	// Create UI elements for controlling road generation settings
-	numRoadsLabel := widget.NewLabel(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
-	numRoadsSlider := widget.NewSlider(0, 2000)
-	numRoadsSlider.OnChanged = func(val float64) {
+	numRoadsSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := numRoadsSlider.value.Get()
 		settings.NumRoads = int(val)
-		numRoadsLabel.SetText(fmt.Sprintf("Number of Roads: %d", settings.NumRoads))
+	}))
+
+	minRoadWidthSlider := newNumericInputSlider(1, 150, settings.MinRoadWidth, "%.0fpx", "Min Road Width")
+	minRoadWidthSlider.entry.OnChanged = func(s string) {
+		minRoadWidthSlider.validate(s, func(hasError bool) {
+			errorStates["minRoadWidth"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	numRoadsSlider.SetValue(float64(settings.NumRoads))
-
-	minRoadWidthLabel := widget.NewLabel(fmt.Sprintf("Min Road Width: %.0fpx", settings.MinRoadWidth))
-	minRoadWidthSlider := widget.NewSlider(1, 150)
-	maxRoadWidthLabel := widget.NewLabel(fmt.Sprintf("Max Road Width: %.0fpx", settings.MaxRoadWidth))
-	maxRoadWidthSlider := widget.NewSlider(1, 150)
-
-	minRoadWidthSlider.OnChanged = func(val float64) {
+	minRoadWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minRoadWidthSlider.value.Get()
 		settings.MinRoadWidth = val
-		if settings.MinRoadWidth > settings.MaxRoadWidth {
-			settings.MaxRoadWidth = settings.MinRoadWidth
-			maxRoadWidthSlider.SetValue(settings.MaxRoadWidth)
-		}
-		minRoadWidthLabel.SetText(fmt.Sprintf("Min Road Width: %.0fpx", settings.MinRoadWidth))
-	}
-	minRoadWidthSlider.SetValue(settings.MinRoadWidth)
+	}))
 
-	maxRoadWidthSlider.OnChanged = func(val float64) {
+	maxRoadWidthSlider := newNumericInputSlider(1, 150, settings.MaxRoadWidth, "%.0fpx", "Max Road Width")
+	maxRoadWidthSlider.entry.OnChanged = func(s string) {
+		maxRoadWidthSlider.validate(s, func(hasError bool) {
+			errorStates["maxRoadWidth"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxRoadWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxRoadWidthSlider.value.Get()
 		settings.MaxRoadWidth = val
-		if settings.MaxRoadWidth < settings.MinRoadWidth {
-			settings.MinRoadWidth = settings.MaxRoadWidth
-			minRoadWidthSlider.SetValue(settings.MinRoadWidth)
-		}
-		maxRoadWidthLabel.SetText(fmt.Sprintf("Max Road Width: %.0fpx", settings.MaxRoadWidth))
-	}
-	maxRoadWidthSlider.SetValue(settings.MaxRoadWidth)
+	}))
 
-	roadExitsLabel := widget.NewLabel(fmt.Sprintf("Road Exits: %d", settings.RoadExits))
-	roadExitsSlider := widget.NewSlider(0, 100)
-	roadExitsSlider.OnChanged = func(val float64) {
-		if val > float64(settings.NumRoads) {
-			val = float64(settings.NumRoads)
-			roadExitsSlider.SetValue(val)
-		}
+	roadExitsSlider := newNumericInputSlider(0, 100, float64(settings.RoadExits), "%.0f", "Road Exits")
+	roadExitsSlider.entry.OnChanged = func(s string) {
+		roadExitsSlider.validate(s, func(hasError bool) {
+			errorStates["roadExits"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	roadExitsSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := roadExitsSlider.value.Get()
 		settings.RoadExits = int(val)
-		roadExitsLabel.SetText(fmt.Sprintf("Road Exits: %d", settings.RoadExits))
-	}
-	roadExitsSlider.SetValue(float64(settings.RoadExits))
+	}))
 
-	roadCurvynessLabel := widget.NewLabel(fmt.Sprintf("Road Curvyness: %.0f%%", settings.RoadCurvyness))
-	roadCurvynessSlider := widget.NewSlider(0, 100)
-	roadCurvynessSlider.OnChanged = func(val float64) {
+	roadCurvynessSlider := newNumericInputSlider(0, 100, settings.RoadCurvyness, "%.0f%%", "Road Curvyness")
+	roadCurvynessSlider.entry.OnChanged = func(s string) {
+		roadCurvynessSlider.validate(s, func(hasError bool) {
+			errorStates["roadCurvyness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	roadCurvynessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := roadCurvynessSlider.value.Get()
 		settings.RoadCurvyness = val
-		roadCurvynessLabel.SetText(fmt.Sprintf("Road Curvyness: %.0f%%", settings.RoadCurvyness))
-	}
-	roadCurvynessSlider.SetValue(settings.RoadCurvyness)
+	}))
 
-	roadDistributionLabel := widget.NewLabel(fmt.Sprintf("Distribution: %.0f%%", settings.RoadDistribution))
-	roadDistributionSlider := widget.NewSlider(0, 100)
-	roadDistributionSlider.OnChanged = func(val float64) {
-		settings.RoadDistribution = val
-		roadDistributionLabel.SetText(fmt.Sprintf("Distribution: %.0f%%", settings.RoadDistribution))
+	roadDistributionSlider := newNumericInputSlider(0, 100, settings.RoadDistribution, "%.0f%%", "Distribution")
+	roadDistributionSlider.entry.OnChanged = func(s string) {
+		roadDistributionSlider.validate(s, func(hasError bool) {
+			errorStates["roadDistribution"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	roadDistributionSlider.SetValue(settings.RoadDistribution)
+	roadDistributionSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := roadDistributionSlider.value.Get()
+		settings.RoadDistribution = val
+	}))
 
 	// Create UI elements for error display and action buttons
-	errorLabel := canvas.NewText("", color.RGBA{R: 255, A: 255})
-	errorLabel.TextSize = 12
+	errorLabel := widget.NewLabel("")
+	errorLabel.Wrapping = fyne.TextWrapWord
 	errorLabel.Hide()
 
-	var generateBtn *widget.Button
-	progressBar := NewTextOverlayProgressBar()
+	progressBar := widget.NewProgressBar()
 	exportCanvasBtn := widget.NewButton("Export Canvas", func() {
 		showSaveDialog(w, canvasImg.Image, settings)
 	})
@@ -436,34 +488,17 @@ func main() {
 					generateBtn.Enable()
 				})
 			}()
-			// Set up progress bar
-			steps := 10
-			currentStep := 0
-
 			seedProvider := NewSeedProvider(settings.Seed)
 			// Step 1: Generating Heightmap
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Heightmap", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
 			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
 			// Step 2: Generating Lakes
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Lakes", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			var lakeImage image.Image
 			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
 
 			// Step 3: Generating Rivers
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Rivers", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			var riverImage image.Image
 			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
 
@@ -476,11 +511,7 @@ func main() {
 			allWaterPixels := append(flatLakePixels, riverPixels...)
 
 			// Step 4: Generating Roads
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Roads", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			var roadImage *image.RGBA
 			roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
 			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
@@ -493,68 +524,40 @@ func main() {
 			}
 
 			// Step 5: Generating Buildings
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Buildings", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
 
 			// Step 6: Darkening Water Areas
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Darkening Water Areas", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
 			// Step 7: Flattening Building Areas
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Flattening Building Areas", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
 			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
 
 			// Step 8: Applying Roughness
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Applying Roughness", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 			// Step 9: Generating Trees
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Trees", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 			// Step 10: Generating Bump Map
-			currentStep++
-			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Generating Bump Map", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
-			})
+
 			bumpMap := GenerateBumpMap(compositeImg.(*image.RGBA), settings.Width, settings.Height, 0.10)
 
 			// Step 11: Finalizing Images
-			currentStep++
+
 			fyne.Do(func() {
-				progressBar.SetText(fmt.Sprintf("Step %d/%d: Finalizing Images", currentStep, steps))
-				progressBar.SetValue(float64(currentStep) / float64(steps))
 				heightmapImg.Image = compositeImg
 				heightmapImg.Refresh()
 				bumpmapImg.Image = bumpMap
 				bumpmapImg.Refresh()
 				canvasImg.Image = finalImage
 				canvasImg.Refresh()
-
-				progressBar.SetText("Generation Complete!")
 			})
 		}()
 	})
@@ -609,100 +612,85 @@ func main() {
 	})
 	// Create tabs for organizing settings
 	terrainTab := container.NewTabItem("Terrain", container.NewVBox(
-		detailLabel,
 		detailSlider,
-		roughnessLabel,
 		roughnessSlider,
 
 		widget.NewLabel(""), // Spacer
 
-		minTreeSizeLabel,
 		minTreeSizeSlider,
-		maxTreeSizeLabel,
 		maxTreeSizeSlider,
-		treeCoverageLabel,
 		treeCoverageSlider,
-		treeClumpinessLabel,
 		treeClumpinessSlider,
 	))
 
 	waterTab := container.NewTabItem("Water", container.NewVBox(
-		lakesLabel,
 		lakesSlider,
-		lakeSizeLowerLabel,
 		lakeSizeLowerSlider,
-		lakeSizeUpperLabel,
 		lakeSizeUpperSlider,
 
 		widget.NewLabel(""), // Spacer
 
-		riversLabel,
 		riversSlider,
-		minRiverWidthLabel,
 		minRiverWidthSlider,
-		maxRiverWidthLabel,
 		maxRiverWidthSlider,
-		riverCurvynessLabel,
 		riverCurvynessSlider,
 	))
 
-	roadDistributionSlider.SetValue(settings.RoadDistribution)
-
 	roadsTab := container.NewTabItem("Roads", container.NewVBox(
-		numRoadsLabel,
 		numRoadsSlider,
-		minRoadWidthLabel,
 		minRoadWidthSlider,
-		maxRoadWidthLabel,
 		maxRoadWidthSlider,
-		roadExitsLabel,
 		roadExitsSlider,
-		roadCurvynessLabel,
 		roadCurvynessSlider,
-		roadDistributionLabel,
 		roadDistributionSlider,
 	))
-	// Create UI elements for building generation settings
-	numBuildingsLabel := widget.NewLabel(fmt.Sprintf("Number of Buildings: %d", settings.NumBuildings))
-	numBuildingsSlider := widget.NewSlider(0, 10000)
-	numBuildingsSlider.OnChanged = func(val float64) {
+	numBuildingsSlider := newNumericInputSlider(0, 10000, float64(settings.NumBuildings), "%.0f", "Number of Buildings")
+	numBuildingsSlider.entry.OnChanged = func(s string) {
+		numBuildingsSlider.validate(s, func(hasError bool) {
+			errorStates["numBuildings"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	numBuildingsSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := numBuildingsSlider.value.Get()
 		settings.NumBuildings = int(val)
-		numBuildingsLabel.SetText(fmt.Sprintf("Number of Buildings: %d", settings.NumBuildings))
+	}))
+
+	minBuildingSizeSlider := newNumericInputSlider(1, 150, settings.MinBuildingSize, "%.0fpx", "Min Building Size")
+	minBuildingSizeSlider.entry.OnChanged = func(s string) {
+		minBuildingSizeSlider.validate(s, func(hasError bool) {
+			errorStates["minBuildingSize"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	numBuildingsSlider.SetValue(float64(settings.NumBuildings))
-
-	minBuildingSizeLabel := widget.NewLabel(fmt.Sprintf("Min Building Size: %.0fpx", settings.MinBuildingSize))
-	minBuildingSizeSlider := widget.NewSlider(1, 150)
-	maxBuildingSizeLabel := widget.NewLabel(fmt.Sprintf("Max Building Size: %.0fpx", settings.MaxBuildingSize))
-	maxBuildingSizeSlider := widget.NewSlider(1, 150)
-
-	minBuildingSizeSlider.OnChanged = func(val float64) {
+	minBuildingSizeSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minBuildingSizeSlider.value.Get()
 		settings.MinBuildingSize = val
-		if settings.MinBuildingSize > settings.MaxBuildingSize {
-			settings.MaxBuildingSize = settings.MinBuildingSize
-			maxBuildingSizeSlider.SetValue(settings.MaxBuildingSize)
-		}
-		minBuildingSizeLabel.SetText(fmt.Sprintf("Min Building Size: %.0fpx", settings.MinBuildingSize))
-	}
-	minBuildingSizeSlider.SetValue(settings.MinBuildingSize)
+	}))
 
-	maxBuildingSizeSlider.OnChanged = func(val float64) {
+	maxBuildingSizeSlider := newNumericInputSlider(1, 150, settings.MaxBuildingSize, "%.0fpx", "Max Building Size")
+	maxBuildingSizeSlider.entry.OnChanged = func(s string) {
+		maxBuildingSizeSlider.validate(s, func(hasError bool) {
+			errorStates["maxBuildingSize"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxBuildingSizeSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxBuildingSizeSlider.value.Get()
 		settings.MaxBuildingSize = val
-		if settings.MaxBuildingSize < settings.MinBuildingSize {
-			settings.MinBuildingSize = settings.MaxBuildingSize
-			minBuildingSizeSlider.SetValue(settings.MinBuildingSize)
-		}
-		maxBuildingSizeLabel.SetText(fmt.Sprintf("Max Building Size: %.0fpx", settings.MaxBuildingSize))
-	}
-	maxBuildingSizeSlider.SetValue(settings.MaxBuildingSize)
+	}))
 
-	buildingDistributionLabel := widget.NewLabel(fmt.Sprintf("Building Distribution: %.0f%%", settings.BuildingDistribution))
-	buildingDistributionSlider := widget.NewSlider(0, 100)
-	buildingDistributionSlider.OnChanged = func(val float64) {
-		settings.BuildingDistribution = val
-		buildingDistributionLabel.SetText(fmt.Sprintf("Building Distribution: %.0f%%", settings.BuildingDistribution))
+	buildingDistributionSlider := newNumericInputSlider(0, 100, settings.BuildingDistribution, "%.0f%%", "Building Distribution")
+	buildingDistributionSlider.entry.OnChanged = func(s string) {
+		buildingDistributionSlider.validate(s, func(hasError bool) {
+			errorStates["buildingDistribution"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	buildingDistributionSlider.SetValue(settings.BuildingDistribution)
+	buildingDistributionSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := buildingDistributionSlider.value.Get()
+		settings.BuildingDistribution = val
+	}))
 
 	buildingShapeLabel := widget.NewLabel("Building Shape:")
 	buildingShapeSelect := widget.NewSelect([]string{"squares", "circles", "rectangles", "mixed", "procedural"}, func(s string) {
@@ -732,43 +720,45 @@ func main() {
 		rectangleRatioSlider,
 	)
 
-	// Create sliders for procedural building complexity
-	minBuildingComplexityLabel := widget.NewLabel(fmt.Sprintf("Min Building Complexity: %d", settings.MinBuildingComplexity))
-	minBuildingComplexitySlider := widget.NewSlider(1, 6)
-	minBuildingComplexitySlider.OnChanged = func(val float64) {
+	minBuildingComplexitySlider := newNumericInputSlider(1, 6, float64(settings.MinBuildingComplexity), "%.0f", "Min Building Complexity")
+	minBuildingComplexitySlider.entry.OnChanged = func(s string) {
+		minBuildingComplexitySlider.validate(s, func(hasError bool) {
+			errorStates["minBuildingComplexity"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	minBuildingComplexitySlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minBuildingComplexitySlider.value.Get()
 		settings.MinBuildingComplexity = int(val)
-		if float64(settings.MinBuildingComplexity) > float64(settings.MaxBuildingComplexity) {
-			settings.MaxBuildingComplexity = settings.MinBuildingComplexity
-		}
-		minBuildingComplexityLabel.SetText(fmt.Sprintf("Min Building Complexity: %d", settings.MinBuildingComplexity))
-	}
-	minBuildingComplexitySlider.SetValue(float64(settings.MinBuildingComplexity))
+	}))
 
-	maxBuildingComplexityLabel := widget.NewLabel(fmt.Sprintf("Max Building Complexity: %d", settings.MaxBuildingComplexity))
-	maxBuildingComplexitySlider := widget.NewSlider(1, 6)
-	maxBuildingComplexitySlider.OnChanged = func(val float64) {
+	maxBuildingComplexitySlider := newNumericInputSlider(1, 6, float64(settings.MaxBuildingComplexity), "%.0f", "Max Building Complexity")
+	maxBuildingComplexitySlider.entry.OnChanged = func(s string) {
+		maxBuildingComplexitySlider.validate(s, func(hasError bool) {
+			errorStates["maxBuildingComplexity"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxBuildingComplexitySlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxBuildingComplexitySlider.value.Get()
 		settings.MaxBuildingComplexity = int(val)
-		if float64(settings.MaxBuildingComplexity) < float64(settings.MinBuildingComplexity) {
-			settings.MinBuildingComplexity = settings.MaxBuildingComplexity
-		}
-		maxBuildingComplexityLabel.SetText(fmt.Sprintf("Max Building Complexity: %d", settings.MaxBuildingComplexity))
-	}
-	maxBuildingComplexitySlider.SetValue(float64(settings.MaxBuildingComplexity))
+	}))
 
-	buildingComplexityRatioLabel := widget.NewLabel(fmt.Sprintf("Building Complexity Ratio: %.0f%%", settings.BuildingComplexityRatio))
-	buildingComplexityRatioSlider := widget.NewSlider(0, 100)
-	buildingComplexityRatioSlider.OnChanged = func(val float64) {
-		settings.BuildingComplexityRatio = val
-		buildingComplexityRatioLabel.SetText(fmt.Sprintf("Building Complexity Ratio: %.0f%%", settings.BuildingComplexityRatio))
+	buildingComplexityRatioSlider := newNumericInputSlider(0, 100, settings.BuildingComplexityRatio, "%.0f%%", "Building Complexity Ratio")
+	buildingComplexityRatioSlider.entry.OnChanged = func(s string) {
+		buildingComplexityRatioSlider.validate(s, func(hasError bool) {
+			errorStates["buildingComplexityRatio"] = hasError
+			updateGenerateBtnState()
+		})
 	}
-	buildingComplexityRatioSlider.SetValue(settings.BuildingComplexityRatio)
+	buildingComplexityRatioSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := buildingComplexityRatioSlider.value.Get()
+		settings.BuildingComplexityRatio = val
+	}))
 
 	proceduralContainer := container.NewVBox(
-		minBuildingComplexityLabel,
 		minBuildingComplexitySlider,
-		maxBuildingComplexityLabel,
 		maxBuildingComplexitySlider,
-		buildingComplexityRatioLabel,
 		buildingComplexityRatioSlider,
 	)
 
@@ -899,13 +889,9 @@ func main() {
 	}
 
 	buildingsTab := container.NewTabItem("Buildings", container.NewVBox(
-		numBuildingsLabel,
 		numBuildingsSlider,
-		minBuildingSizeLabel,
 		minBuildingSizeSlider,
-		maxBuildingSizeLabel,
 		maxBuildingSizeSlider,
-		buildingDistributionLabel,
 		buildingDistributionSlider,
 		buildingShapeLabel,
 		buildingShapeSelect,

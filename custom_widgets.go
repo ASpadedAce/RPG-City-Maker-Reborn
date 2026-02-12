@@ -1,96 +1,125 @@
 package main
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
-// TextOverlayProgressBar is a custom widget that displays a progress bar with text overlay.
-// This allows showing progress information (e.g., step description) directly on the progress bar.
-type TextOverlayProgressBar struct {
+// numericInputSlider is a custom widget that combines a slider and a text entry for numeric input.
+type numericInputSlider struct {
 	widget.BaseWidget
-	progressBar *widget.ProgressBar
-	label       *widget.Label
+	value      binding.Float
+	min, max   float64
+	slider     *widget.Slider
+	entry      *widget.Entry
+	format     string
+	errorLabel *widget.Label
+	label      *widget.Label
 }
 
-// NewTextOverlayProgressBar creates a new TextOverlayProgressBar.
-func NewTextOverlayProgressBar() *TextOverlayProgressBar {
-	p := &TextOverlayProgressBar{
-		progressBar: widget.NewProgressBar(),
-		label:       widget.NewLabel(""),
-	}
-	p.ExtendBaseWidget(p)
-	return p
+type numericInputSliderRenderer struct {
+	slider       *numericInputSlider
+	label        *widget.Label
+	entry        *widget.Entry
+	sliderWidget *widget.Slider
+	errorLabel   *widget.Label
+	layout       fyne.Layout
+	objects      []fyne.CanvasObject
 }
 
-// SetValue sets the progress value of the underlying progress bar.
-func (p *TextOverlayProgressBar) SetValue(v float64) {
-	p.progressBar.SetValue(v)
+func (r *numericInputSliderRenderer) MinSize() fyne.Size {
+	return r.layout.MinSize(r.objects)
 }
 
-// SetText sets the text to be displayed on the progress bar.
-func (p *TextOverlayProgressBar) SetText(text string) {
-	p.label.SetText(text)
+func (r *numericInputSliderRenderer) Layout(size fyne.Size) {
+	r.layout.Layout(r.objects, size)
 }
 
-// CreateRenderer returns a new renderer for the widget.
-func (p *TextOverlayProgressBar) CreateRenderer() fyne.WidgetRenderer {
-	return &textOverlayProgressBarRenderer{
-		progressBar: p.progressBar,
-		label:       p.label,
-		objects:     []fyne.CanvasObject{p.progressBar, p.label},
-	}
-}
-
-// textOverlayProgressBarRenderer is the renderer for the TextOverlayProgressBar.
-// It handles the layout and rendering of the progress bar and the overlay text.
-type textOverlayProgressBarRenderer struct {
-	progressBar *widget.ProgressBar
-	label       *widget.Label
-	objects     []fyne.CanvasObject
-}
-
-// Layout defines the size and position of the progress bar and the label.
-func (r *textOverlayProgressBarRenderer) Layout(size fyne.Size) {
-	r.progressBar.Resize(size)
-	r.label.Resize(size)
-	r.label.Move(fyne.NewPos(0, 0))
-}
-
-// MinSize returns the minimum size of the widget.
-func (r *textOverlayProgressBarRenderer) MinSize() fyne.Size {
-	return r.progressBar.MinSize()
-}
-
-// Refresh redraws the widget.
-func (r *textOverlayProgressBarRenderer) Refresh() {
-	r.progressBar.Refresh()
-	r.label.Refresh()
-}
-
-// Objects returns the canvas objects that make up the widget.
-func (r *textOverlayProgressBarRenderer) Objects() []fyne.CanvasObject {
+func (r *numericInputSliderRenderer) Objects() []fyne.CanvasObject {
 	return r.objects
 }
 
-// Destroy is a no-op for this renderer.
-func (r *textOverlayProgressBarRenderer) Destroy() {}
-
-// CustomTheme is a custom theme to make the progress bar thinner.
-type CustomTheme struct {
-	fyne.Theme
+func (r *numericInputSliderRenderer) Refresh() {
+	r.label.SetText(r.slider.label.Text)
 }
 
-// NewCustomTheme creates a new CustomTheme.
-func NewCustomTheme(theme fyne.Theme) *CustomTheme {
-	return &CustomTheme{Theme: theme}
-}
+func (r *numericInputSliderRenderer) Destroy() {}
 
-// Size returns the size for a given themeable item.
-// It overrides the default progress bar height to make it thinner.
-func (t *CustomTheme) Size(name fyne.ThemeSizeName) float32 {
-	if name == "progressBar.height" {
-		return 10
+// newNumericInputSlider creates a new numericInputSlider widget.
+func newNumericInputSlider(min, max float64, initialValue float64, format string, labelText string) *numericInputSlider {
+	s := &numericInputSlider{
+		min:    min,
+		max:    max,
+		format: format,
 	}
-	return t.Theme.Size(name)
+	s.ExtendBaseWidget(s)
+
+	s.label = widget.NewLabel(labelText)
+	s.value = binding.NewFloat()
+	s.value.Set(initialValue)
+
+	s.slider = widget.NewSlider(min, max)
+	s.slider.Bind(s.value)
+
+	s.entry = widget.NewEntry()
+	s.value.AddListener(binding.NewDataListener(func() {
+		val, _ := s.value.Get()
+		s.entry.SetText(fmt.Sprintf(s.format, val))
+	}))
+
+	s.errorLabel = widget.NewLabel("")
+	s.errorLabel.Hide()
+
+	return s
+}
+
+// validate checks the text entry for valid numeric input within the defined range.
+func (s *numericInputSlider) validate(text string, onError func(bool)) {
+	text = strings.TrimSuffix(text, "px")
+	text = strings.TrimSuffix(text, "%")
+	val, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		s.errorLabel.SetText("Not a number")
+		s.errorLabel.Show()
+		onError(true)
+		return
+	}
+
+	if val < s.min || val > s.max {
+		s.errorLabel.SetText(fmt.Sprintf("Out of range (%.0f-%.0f)", s.min, s.max))
+		s.errorLabel.Show()
+		onError(true)
+		return
+	}
+
+	s.errorLabel.Hide()
+	onError(false)
+	s.value.Set(val)
+}
+
+// CreateRenderer is a method required by the Fyne toolkit to render the widget.
+func (s *numericInputSlider) CreateRenderer() fyne.WidgetRenderer {
+	r := &numericInputSliderRenderer{
+		slider:       s,
+		label:        s.label,
+		entry:        s.entry,
+		sliderWidget: s.slider,
+		errorLabel:   s.errorLabel,
+	}
+
+	r.layout = layout.NewVBoxLayout()
+	r.objects = []fyne.CanvasObject{
+		container.NewBorder(nil, nil, r.label, r.entry),
+		r.sliderWidget,
+		r.errorLabel,
+	}
+
+	return r
 }
