@@ -461,8 +461,10 @@ func main() {
 	errorLabel := widget.NewLabel("")
 	errorLabel.Wrapping = fyne.TextWrapWord
 	errorLabel.Hide()
-
+	progressLabel := widget.NewLabel("")
 	progressBar := widget.NewProgressBar()
+	progressContainer := container.NewVBox(progressLabel, progressBar)
+	progressContainer.Hide()
 	exportCanvasBtn := widget.NewButton("Export Canvas", func() {
 		showSaveDialog(w, canvasImg.Image, settings)
 	})
@@ -478,27 +480,41 @@ func main() {
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
-			// Disable button during generation
+			// Disable button and show progress bar during generation
 			fyne.Do(func() {
 				generateBtn.Disable()
+				progressContainer.Show()
 			})
 			defer func() {
-				// Re-enable button after generation
+				// Re-enable button and hide progress bar after generation
 				fyne.Do(func() {
 					generateBtn.Enable()
+					progressContainer.Hide()
 				})
 			}()
 			seedProvider := NewSeedProvider(settings.Seed)
 			// Step 1: Generating Heightmap
+			fyne.Do(func() {
+				progressLabel.SetText("Step 1 of 11: Generating Heightmap")
+				progressBar.SetValue(1.0 / 11.0)
+			})
 			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
 			// Step 2: Generating Lakes
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 2 of 11: Generating Lakes")
+				progressBar.SetValue(2.0 / 11.0)
+			})
 			var lakeImage image.Image
 			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
 
 			// Step 3: Generating Rivers
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 3 of 11: Generating Rivers")
+				progressBar.SetValue(3.0 / 11.0)
+			})
 			var riverImage image.Image
 			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
 
@@ -512,6 +528,10 @@ func main() {
 
 			// Step 4: Generating Roads
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 4 of 11: Generating Roads")
+				progressBar.SetValue(4.0 / 11.0)
+			})
 			var roadImage *image.RGBA
 			roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
 			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
@@ -525,28 +545,56 @@ func main() {
 
 			// Step 5: Generating Buildings
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 5 of 11: Generating Buildings")
+				progressBar.SetValue(5.0 / 11.0)
+			})
 			buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
 
 			// Step 6: Darkening Water Areas
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 6 of 11: Darkening Water Areas")
+				progressBar.SetValue(6.0 / 11.0)
+			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
 
 			// Step 7: Flattening Building Areas
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 7 of 11: Flattening Building Areas")
+				progressBar.SetValue(7.0 / 11.0)
+			})
 			flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 8 of 11: Flattening Road Areas")
+				progressBar.SetValue(8.0 / 11.0)
+			})
 			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
 
 			// Step 8: Applying Roughness
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 9 of 11: Applying Roughness")
+				progressBar.SetValue(9.0 / 11.0)
+			})
 			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
 			// Step 9: Generating Trees
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 10 of 11: Generating Trees")
+				progressBar.SetValue(10.0 / 11.0)
+			})
 			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 			// Step 10: Generating Bump Map
 
+			fyne.Do(func() {
+				progressLabel.SetText("Step 11 of 11: Generating Bump Map")
+				progressBar.SetValue(1.0)
+			})
 			bumpMap := GenerateBumpMap(compositeImg.(*image.RGBA), settings.Width, settings.Height, 0.10)
 
 			// Step 11: Finalizing Images
@@ -908,7 +956,7 @@ func main() {
 		randomizeBtn,
 		generateBtn,
 		errorLabel,
-		progressBar,
+		progressContainer,
 		widget.NewSeparator(),
 		exportCanvasBtn,
 		exportHeightmapBtn,

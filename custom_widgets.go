@@ -114,9 +114,9 @@ func (s *numericInputSlider) CreateRenderer() fyne.WidgetRenderer {
 		errorLabel:   s.errorLabel,
 	}
 
-	r.layout = layout.NewVBoxLayout()
+	r.layout = layout.NewGridLayout(1)
 	r.objects = []fyne.CanvasObject{
-		container.NewBorder(nil, nil, r.label, r.entry),
+		container.NewGridWithColumns(2, r.label, r.entry),
 		r.sliderWidget,
 		r.errorLabel,
 	}
