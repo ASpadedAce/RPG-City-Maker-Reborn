@@ -409,11 +409,15 @@ func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
 }
 
 // drawCircle draws a circle on the image and adds its pixels to the given slice.
+// The outer edges are roughened using dual sin waves for natural-looking banks.
 func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image) {
 	bounds := img.Bounds()
-	r2 := radius * radius
-	innerRadius := radius * 0.875 // The inner 75% of the river is smooth
-	innerR2 := innerRadius * innerRadius
+
+	// Calculate dual sin wave amplitudes for outer edge roughening
+	// Large amplitude represents major variations in river width
+	// Small amplitude is 1/4 of large for subtle details
+	largeAmplitude := radius * 0.25
+	smallAmplitude := largeAmplitude / 4.0
 
 	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
 		for x := int(math.Floor(float64(center.X) - radius)); x <= int(math.Ceil(float64(center.X)+radius)); x++ {
@@ -423,19 +427,19 @@ func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Col
 			}
 
 			dx, dy := float64(x-center.X), float64(y-center.Y)
-			dist2 := dx*dx + dy*dy
+			dist := math.Sqrt(dx*dx + dy*dy)
 
-			if dist2 <= r2 {
+			// Apply dual sin wave offset to create rough edges
+			positionPhase := float64(x)*0.008 + float64(y)*0.012
+			largeWave := math.Sin(positionPhase) * largeAmplitude
+			smallWave := math.Sin(positionPhase*3.5) * smallAmplitude
+			waveOffset := largeWave + smallWave
+
+			// Effective radius varies based on sin wave
+			effectiveRadius := radius + waveOffset
+
+			if dist <= effectiveRadius {
 				if !isWater[p] {
-					// Roughen the outer 15% of the river based on the heightmap.
-					if dist2 > innerR2 {
-						luma, _, _, _ := heightmap.At(x, y).RGBA()
-						heightmapVal := float64(luma) / 65535.0
-						if heightmapVal < 0.5 {
-							continue
-						}
-					}
-
 					img.Set(x, y, c)
 					*pixels = append(*pixels, p)
 					isWater[p] = true
