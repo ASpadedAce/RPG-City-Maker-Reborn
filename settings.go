@@ -19,6 +19,7 @@ type Settings struct {
 	Lakes                 int     `json:"lakes"`
 	LakeSizeLower         float64 `json:"lake_size_lower"`
 	LakeSizeUpper         float64 `json:"lake_size_upper"`
+	LakeEdgeRoughness     float64 `json:"lake_edge_roughness"`
 	Rivers                int     `json:"rivers"`
 	MinRiverWidth         float64 `json:"min_river_width"`
 	MaxRiverWidth         float64 `json:"max_river_width"`
@@ -115,6 +116,7 @@ func LoadSettings() (*Settings, error) {
 				Lakes:                 0,
 				LakeSizeLower:         1,
 				LakeSizeUpper:         5,
+				LakeEdgeRoughness:     50,
 				MinTreeSize:           5,
 				MaxTreeSize:           20,
 				TreeCoverage:          20,

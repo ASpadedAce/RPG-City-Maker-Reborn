@@ -153,7 +153,7 @@ func main() {
 		// Step 2: Generating Lakes
 		var lakeImage image.Image
 
-		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
+		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness)
 
 		// Step 3: Generating Rivers
 		var riverImage image.Image
@@ -291,6 +291,19 @@ func main() {
 		val, _ := lakeSizeUpperSlider.value.Get()
 		settings.LakeSizeUpper = val
 	}))
+
+	lakeEdgeRoughnessSlider := newNumericInputSlider(0, 100, settings.LakeEdgeRoughness, "%.0f%%", "Lake Edge Roughness")
+	lakeEdgeRoughnessSlider.entry.OnChanged = func(s string) {
+		lakeEdgeRoughnessSlider.validate(s, func(hasError bool) {
+			errorStates["lakeEdgeRoughness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	lakeEdgeRoughnessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := lakeEdgeRoughnessSlider.value.Get()
+		settings.LakeEdgeRoughness = val
+	}))
+
 	riversSlider := newNumericInputSlider(0, 5, float64(settings.Rivers), "%.0f", "Rivers")
 	riversSlider.entry.OnChanged = func(s string) {
 		riversSlider.validate(s, func(hasError bool) {
@@ -532,7 +545,7 @@ func main() {
 				progressBar.SetValue(2.0 / 11.0)
 			})
 			var lakeImage image.Image
-			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, noiseImg, seedProvider.Next())
+			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness)
 
 			// Step 3: Generating Rivers
 
@@ -700,6 +713,7 @@ func main() {
 		lakesSlider,
 		lakeSizeLowerSlider,
 		lakeSizeUpperSlider,
+		lakeEdgeRoughnessSlider,
 
 		widget.NewLabel(""), // Spacer
 

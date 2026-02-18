@@ -47,7 +47,8 @@ func (pq *priorityQueue) Pop() any {
 }
 
 // GenerateLakes creates lakes on the map using a growth algorithm.
-func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, heightmap image.Image, seed int64) (image.Image, [][]image.Point) {
+// When lakeEdgeRoughness is 0, lakes grow in perfect circles. Higher values add noise-based irregularity.
+func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, seed int64, lakeEdgeRoughness float64) (image.Image, [][]image.Point) {
 	// Initialize a white canvas to draw the lakes on
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
@@ -125,7 +126,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			continue
 		}
 
-		// Use noise to create a more natural lake shape.
+		// Use noise to create a more natural lake shape (only if roughness > 0).
 		seedX := randSrc.Float64() * 10000.0
 		seedY := randSrc.Float64() * 10000.0
 		radius := math.Sqrt(float64(targetPixelsPerLake) / math.Pi)
@@ -134,12 +135,18 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		getScore := func(pt image.Point) float64 {
 			dx, dy := pt.X-startPt.X, pt.Y-startPt.Y
 			dist := math.Sqrt(float64(dx*dx + dy*dy))
-			noise := noiseGen.Eval2(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
 			distPenalty := math.Pow(dist/radius, 3.0)
-			luma, _, _, _ := heightmap.At(pt.X, pt.Y).RGBA()
-			heightmapVal := float64(luma) / 65535.0
-			heightmapEffect := (0.5 - heightmapVal) * 1.5 // Encourage growth in lower areas
-			return noise - distPenalty + heightmapEffect
+
+			// Only apply noise if edge roughness is requested
+			if lakeEdgeRoughness > 0 {
+				noise := noiseGen.Eval2(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
+				// Scale noise contribution by roughness setting
+				noiseContribution := noise * (lakeEdgeRoughness / 100.0)
+				return noiseContribution - distPenalty
+			}
+
+			// Pure circular growth when variability is 0
+			return -distPenalty
 		}
 
 		heap.Push(pq, &lakePixel{point: startPt, score: getScore(startPt)})
