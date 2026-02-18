@@ -158,7 +158,7 @@ func main() {
 		// Step 3: Generating Rivers
 		var riverImage image.Image
 
-		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
+		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
 
 		finalImage := riverImage.(*image.RGBA)
 
@@ -338,6 +338,31 @@ func main() {
 		val, _ := riverCurvynessSlider.value.Get()
 		settings.RiverCurvyness = val
 	}))
+
+	riverWidthVariabilitySlider := newNumericInputSlider(0, 100, settings.RiverWidthVariability, "%.0f%%", "River Width Variability")
+	riverWidthVariabilitySlider.entry.OnChanged = func(s string) {
+		riverWidthVariabilitySlider.validate(s, func(hasError bool) {
+			errorStates["riverWidthVariability"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	riverWidthVariabilitySlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := riverWidthVariabilitySlider.value.Get()
+		settings.RiverWidthVariability = val
+	}))
+
+	riverEdgeRoughnessSlider := newNumericInputSlider(0, 100, settings.RiverEdgeRoughness, "%.0f%%", "River Edge Roughness")
+	riverEdgeRoughnessSlider.entry.OnChanged = func(s string) {
+		riverEdgeRoughnessSlider.validate(s, func(hasError bool) {
+			errorStates["riverEdgeRoughness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	riverEdgeRoughnessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := riverEdgeRoughnessSlider.value.Get()
+		settings.RiverEdgeRoughness = val
+	}))
+
 	minTreeSizeSlider := newNumericInputSlider(1, 150, settings.MinTreeSize, "%.0fpx", "Min Tree Size")
 	minTreeSizeSlider.entry.OnChanged = func(s string) {
 		minTreeSizeSlider.validate(s, func(hasError bool) {
@@ -516,7 +541,7 @@ func main() {
 				progressBar.SetValue(3.0 / 11.0)
 			})
 			var riverImage image.Image
-			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg)
+			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
 
 			finalImage := riverImage.(*image.RGBA)
 
@@ -682,6 +707,8 @@ func main() {
 		minRiverWidthSlider,
 		maxRiverWidthSlider,
 		riverCurvynessSlider,
+		riverWidthVariabilitySlider,
+		riverEdgeRoughnessSlider,
 	))
 
 	roadsTab := container.NewTabItem("Roads", container.NewVBox(

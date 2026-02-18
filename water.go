@@ -190,7 +190,7 @@ type River struct {
 }
 
 // GenerateRivers creates rivers on the map.
-func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image) (image.Image, []image.Point) {
+func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) (image.Image, []image.Point) {
 	if numRivers == 0 {
 		return inputImage, nil
 	}
@@ -267,7 +267,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		radius := riverWidthPx / 2.0
 
 		for _, p := range path {
-			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater, heightmap)
+			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater, heightmap, riverWidthVariability, riverEdgeRoughness)
 		}
 		r.Points = path
 	}
@@ -410,14 +410,19 @@ func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
 
 // drawCircle draws a circle on the image and adds its pixels to the given slice.
 // The outer edges are roughened using dual sin waves for natural-looking banks.
-func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image) {
+// riverWidthVariability controls the amplitude of width changes (0-100%).
+// riverEdgeRoughness controls the detail level of the edge roughness (0-100%).
+func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) {
 	bounds := img.Bounds()
 
 	// Calculate dual sin wave amplitudes for outer edge roughening
-	// Large amplitude represents major variations in river width
-	// Small amplitude is 1/4 of large for subtle details
-	largeAmplitude := radius * 0.25
-	smallAmplitude := largeAmplitude / 4.0
+	// Large amplitude represents major variations in river width (controlled by riverWidthVariability)
+	// At 0%, no width variation; at 100%, amplitude is 50% of radius
+	largeAmplitude := (radius * 0.5) * (riverWidthVariability / 100.0)
+
+	// Small amplitude is controlled by riverEdgeRoughness
+	// At 0%, no detail; at 100%, detail amplitude equals large amplitude
+	smallAmplitude := largeAmplitude * (riverEdgeRoughness / 100.0)
 
 	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
 		for x := int(math.Floor(float64(center.X) - radius)); x <= int(math.Ceil(float64(center.X)+radius)); x++ {

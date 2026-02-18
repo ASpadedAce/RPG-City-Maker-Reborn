@@ -16,13 +16,15 @@ type Settings struct {
 	Height    int     `json:"height"`
 
 	// Water settings
-	Lakes          int     `json:"lakes"`
-	LakeSizeLower  float64 `json:"lake_size_lower"`
-	LakeSizeUpper  float64 `json:"lake_size_upper"`
-	Rivers         int     `json:"rivers"`
-	MinRiverWidth  float64 `json:"min_river_width"`
-	MaxRiverWidth  float64 `json:"max_river_width"`
-	RiverCurvyness float64 `json:"river_curvyness"`
+	Lakes                 int     `json:"lakes"`
+	LakeSizeLower         float64 `json:"lake_size_lower"`
+	LakeSizeUpper         float64 `json:"lake_size_upper"`
+	Rivers                int     `json:"rivers"`
+	MinRiverWidth         float64 `json:"min_river_width"`
+	MaxRiverWidth         float64 `json:"max_river_width"`
+	RiverCurvyness        float64 `json:"river_curvyness"`
+	RiverWidthVariability float64 `json:"river_width_variability"`
+	RiverEdgeRoughness    float64 `json:"river_edge_roughness"`
 
 	// Tree settings
 	MinTreeSize    float64 `json:"min_tree_size"`
@@ -106,33 +108,35 @@ func LoadSettings() (*Settings, error) {
 				homeDir = "."
 			}
 			return &Settings{
-				Detail:               1,
-				Roughness:            0,
-				Width:                300,
-				Height:               300,
-				Lakes:                0,
-				LakeSizeLower:        1,
-				LakeSizeUpper:        5,
-				MinTreeSize:          5,
-				MaxTreeSize:          20,
-				TreeCoverage:         20,
-				TreeClumpiness:       50,
-				Seed:                 time.Now().UnixNano(),
-				Rivers:               0,
-				MinRiverWidth:        1,
-				MaxRiverWidth:        5,
-				RiverCurvyness:       50,
-				NumRoads:             100,
-				MinRoadWidth:         2,
-				MaxRoadWidth:         8,
-				RoadExits:            5,
-				RoadCurvyness:        50,
-				RoadDistribution:     50,
-				NumBuildings:         200,
-				MinBuildingSize:      10,
-				MaxBuildingSize:      30,
-				BuildingDistribution: 20,
-				BuildingShape:        "mixed",
+				Detail:                1,
+				Roughness:             0,
+				Width:                 300,
+				Height:                300,
+				Lakes:                 0,
+				LakeSizeLower:         1,
+				LakeSizeUpper:         5,
+				MinTreeSize:           5,
+				MaxTreeSize:           20,
+				TreeCoverage:          20,
+				TreeClumpiness:        50,
+				Seed:                  time.Now().UnixNano(),
+				Rivers:                0,
+				MinRiverWidth:         1,
+				MaxRiverWidth:         5,
+				RiverCurvyness:        50,
+				RiverWidthVariability: 50,
+				RiverEdgeRoughness:    50,
+				NumRoads:              100,
+				MinRoadWidth:          2,
+				MaxRoadWidth:          8,
+				RoadExits:             5,
+				RoadCurvyness:         50,
+				RoadDistribution:      50,
+				NumBuildings:          200,
+				MinBuildingSize:       10,
+				MaxBuildingSize:       30,
+				BuildingDistribution:  20,
+				BuildingShape:         "mixed",
 				BuildingShapeRatios: map[string]float64{
 					"squares":    40,
 					"circles":    30,
