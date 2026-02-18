@@ -12,19 +12,16 @@ import (
 	"github.com/ojrac/opensimplex-go"
 )
 
-// lakePixel represents a potential pixel to be added to a lake during growth.
-// It is used in a priority queue to determine the next pixel to add.
 type lakePixel struct {
 	point image.Point
 	score float64
-	index int // required for heap.Interface
+	index int
 }
 
-// priorityQueue implements a max-heap for lakePixel structs.
 type priorityQueue []*lakePixel
 
 func (pq priorityQueue) Len() int           { return len(pq) }
-func (pq priorityQueue) Less(i, j int) bool { return pq[i].score > pq[j].score } // Max-heap
+func (pq priorityQueue) Less(i, j int) bool { return pq[i].score > pq[j].score }
 func (pq priorityQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 	pq[i].index = i
@@ -46,10 +43,8 @@ func (pq *priorityQueue) Pop() any {
 	return item
 }
 
-// GenerateLakes creates lakes on the map using a growth algorithm.
-// When lakeEdgeRoughness is 0, lakes grow in perfect circles. Higher values add noise-based irregularity.
+// GenerateLakes creates lakes on the map using a priority queue growth algorithm
 func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, seed int64, lakeEdgeRoughness float64) (image.Image, [][]image.Point) {
-	// Initialize a white canvas to draw the lakes on
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
@@ -60,7 +55,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	var allLakes [][]image.Point
 	randSrc := rand.New(rand.NewSource(seed))
 
-	// Step 1: Divide the image into a grid to distribute the lakes.
+	// Divide the image into a grid to distribute lakes evenly
 	gridDim := int(math.Ceil(math.Sqrt(float64(numLakes))))
 	if gridDim == 0 {
 		return canvas, nil
@@ -71,7 +66,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		return canvas, nil
 	}
 
-	// Step 2: Create a shuffled list of chunk indices to randomize lake placement.
+	// Shuffle chunk indices for random lake placement
 	chunkIndices := make([]int, gridDim*gridDim)
 	for i := range chunkIndices {
 		chunkIndices[i] = i
@@ -83,7 +78,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	totalArea := float64(width * height)
 	noiseGen := opensimplex.New(seed)
 
-	// Step 3: Generate a lake in a subset of the chunks.
+	// Generate each lake
 	for i := range numLakes {
 		if i >= len(chunkIndices) {
 			break
@@ -91,7 +86,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 
 		var currentLake []image.Point
 
-		// Each lake gets a random size within the defined range.
+		// Randomize lake size within specified range
 		lakeSize := lakeSizeLower
 		if lakeSizeUpper > lakeSizeLower {
 			lakeSize = lakeSizeLower + randSrc.Float64()*(lakeSizeUpper-lakeSizeLower)
@@ -112,12 +107,12 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			(chunkGridY+1)*chunkHeight,
 		)
 
-		// Use a priority queue-based growth algorithm within the chunk.
+		// Initialize priority queue growth algorithm
 		pq := &priorityQueue{}
 		heap.Init(pq)
 		visited := make(map[image.Point]bool)
 
-		// Start the growth near the center of the chunk.
+		// Start growth at chunk center
 		startPt := image.Point{
 			X: chunkRect.Min.X + chunkWidth/2,
 			Y: chunkRect.Min.Y + chunkHeight/2,
@@ -126,33 +121,31 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			continue
 		}
 
-		// Use noise to create a more natural lake shape (only if roughness > 0).
+		// Setup noise generation for natural lake shapes
 		seedX := randSrc.Float64() * 10000.0
 		seedY := randSrc.Float64() * 10000.0
 		radius := math.Sqrt(float64(targetPixelsPerLake) / math.Pi)
 		noiseFreq := 0.01 + (0.2 / (radius + 1.0))
 
+		// Score function determines which pixels to add to lake
 		getScore := func(pt image.Point) float64 {
 			dx, dy := pt.X-startPt.X, pt.Y-startPt.Y
 			dist := math.Sqrt(float64(dx*dx + dy*dy))
 			distPenalty := math.Pow(dist/radius, 3.0)
 
-			// Only apply noise if edge roughness is requested
 			if lakeEdgeRoughness > 0 {
 				noise := noiseGen.Eval2(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
-				// Scale noise contribution by roughness setting
 				noiseContribution := noise * (lakeEdgeRoughness / 100.0)
 				return noiseContribution - distPenalty
 			}
 
-			// Pure circular growth when variability is 0
 			return -distPenalty
 		}
 
 		heap.Push(pq, &lakePixel{point: startPt, score: getScore(startPt)})
 		visited[startPt] = true
 
-		// Grow the lake until it reaches its target size.
+		// Grow lake to target size
 		lakeCount := 0
 		for pq.Len() > 0 && lakeCount < targetPixelsPerLake {
 			current := heap.Pop(pq).(*lakePixel)
@@ -161,7 +154,7 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			currentLake = append(currentLake, current.point)
 			lakeCount++
 
-			// Add neighbors to the priority queue.
+			// Add neighboring pixels to growth queue
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
 					if dx == 0 && dy == 0 {
@@ -189,14 +182,14 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	return canvas, allLakes
 }
 
-// River represents a river on the map.
+// River represents a river on the map
 type River struct {
 	Width      float64
 	Start, End image.Point
 	Points     []image.Point
 }
 
-// GenerateRivers creates rivers on the map.
+// GenerateRivers creates rivers flowing across the map from edge to edge
 func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) (image.Image, []image.Point) {
 	if numRivers == 0 {
 		return inputImage, nil
@@ -212,7 +205,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 	randSrc := rand.New(rand.NewSource(seed))
 	avgDim := float64(width+height) / 2.0
 
-	// Create a map of water pixels for collision detection.
+	// Build water pixel lookup maps
 	isWater := make(map[image.Point]bool)
 	lakePixelMap := make(map[image.Point]int)
 	for i, lake := range lakes {
@@ -222,7 +215,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		}
 	}
 
-	// Create rivers with varying widths.
+	// Create rivers with progressively varying widths
 	rivers := make([]River, numRivers)
 	for i := range numRivers {
 		widthPercent := float64(i) / float64(numRivers-1)
@@ -232,36 +225,36 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		rivers[i].Width = maxWidth - widthPercent*(maxWidth-minWidth)
 	}
 
-	// Sort rivers by width in descending order.
+	// Sort rivers by width in descending order
 	sort.Slice(rivers, func(i, j int) bool {
 		return rivers[i].Width > rivers[j].Width
 	})
 
 	numControlPoints := max(int(avgDim*0.03), 60)
 
-	// Generate each river.
+	// Generate each river
 	for i := range rivers {
 		r := &rivers[i]
 
-		// Determine the start and end edges of the river.
+		// Pick random start and end edges
 		startEdge := randSrc.Intn(4)
 		endEdge := (startEdge + randSrc.Intn(3) + 1) % 4
 
 		r.Start = getPointOnEdge(width, height, startEdge, randSrc)
 		r.End = getPointOnEdge(width, height, endEdge, randSrc)
 
-		// Calculate the river's path.
+		// Calculate river path with curves
 		path := calculateRiverPath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
 
-		// Check for intersections with other water bodies.
+		// Check for intersections with existing water
 		for _, p := range path {
 			if isWater[p] {
 				if lakeIndex, isLake := lakePixelMap[p]; isLake {
-					// If the river intersects with a lake, end the river at the lake's center.
+					// End river at lake center if it intersects
 					lakeCenter := findCenter(lakes[lakeIndex])
 					r.End = lakeCenter
 				} else {
-					// If the river intersects with another river, end it at the intersection point.
+					// End river at intersection with another river
 					r.End = p
 				}
 				path = calculateRiverPath(r.Start, r.End, curvyness/100.0, avgDim, randSrc, numControlPoints)
@@ -269,7 +262,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 			}
 		}
 
-		// Draw the river on the canvas.
+		// Draw river on canvas
 		riverWidthPx := (r.Width / 100.0) * avgDim
 		radius := riverWidthPx / 2.0
 
@@ -282,7 +275,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 	return canvas, allRiverPixels
 }
 
-// bresenhamRiver creates a path between control points using Bresenham's line algorithm.
+// bresenhamRiver draws a line between control points using Bresenham's algorithm
 func bresenhamRiver(path []image.Point) []image.Point {
 	if len(path) < 2 {
 		return path
@@ -322,7 +315,7 @@ func bresenhamRiver(path []image.Point) []image.Point {
 	return fullPath
 }
 
-// calculateRiverPath computes the path for a river, including curves.
+// calculateRiverPath computes a curved path for a river using sine waves
 func calculateRiverPath(start, end image.Point, curvyness, avgDim float64, randSrc *rand.Rand, numControlPoints int) []image.Point {
 	dx := end.X - start.X
 	dy := end.Y - start.Y
@@ -336,7 +329,7 @@ func calculateRiverPath(start, end image.Point, curvyness, avgDim float64, randS
 		return bresenhamRiver([]image.Point{start, end})
 	}
 
-	// Use sine waves to create curves in the river.
+	// Use multiple sine waves at different frequencies for natural curves
 	type wave struct {
 		amplitude float64
 		numWaves  float64
@@ -362,7 +355,7 @@ func calculateRiverPath(start, end image.Point, curvyness, avgDim float64, randS
 		amp /= 3
 	}
 
-	// Generate control points for the curve.
+	// Generate control points along the path
 	controlPoints := make([]image.Point, numControlPoints+1)
 	for i := 0; i <= numControlPoints; i++ {
 		t := float64(i) / float64(numControlPoints)
@@ -381,11 +374,11 @@ func calculateRiverPath(start, end image.Point, curvyness, avgDim float64, randS
 		controlPoints[i] = image.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
 	}
 
-	// Create the final path using Bresenham's algorithm between control points.
+	// Create final path using Bresenham between control points
 	return bresenhamRiver(controlPoints)
 }
 
-// findCenter finds the center of a slice of points.
+// findCenter calculates the center point of a set of pixels
 func findCenter(pixels []image.Point) image.Point {
 	if len(pixels) == 0 {
 		return image.Point{}
@@ -401,7 +394,7 @@ func findCenter(pixels []image.Point) image.Point {
 	}
 }
 
-// getPointOnEdge returns a random point on a specified edge of the map.
+// getPointOnEdge returns a random point on the specified map edge
 func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
 	switch edge {
 	case 0: // Top
@@ -415,20 +408,11 @@ func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
 	}
 }
 
-// drawCircle draws a circle on the image and adds its pixels to the given slice.
-// The outer edges are roughened using dual sin waves for natural-looking banks.
-// riverWidthVariability controls the amplitude of width changes (0-100%).
-// riverEdgeRoughness controls the detail level of the edge roughness (0-100%).
+// drawCircle draws a circular river cross-section with sine wave edge roughening
 func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) {
 	bounds := img.Bounds()
 
-	// Calculate dual sin wave amplitudes for outer edge roughening
-	// Large amplitude represents major variations in river width (controlled by riverWidthVariability)
-	// At 0%, no width variation; at 100%, amplitude is 50% of radius
 	largeAmplitude := (radius * 0.5) * (riverWidthVariability / 100.0)
-
-	// Small amplitude is controlled by riverEdgeRoughness
-	// At 0%, no detail; at 100%, detail amplitude equals large amplitude
 	smallAmplitude := largeAmplitude * (riverEdgeRoughness / 100.0)
 
 	for y := int(math.Floor(float64(center.Y) - radius)); y <= int(math.Ceil(float64(center.Y)+radius)); y++ {
@@ -441,13 +425,12 @@ func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Col
 			dx, dy := float64(x-center.X), float64(y-center.Y)
 			dist := math.Sqrt(dx*dx + dy*dy)
 
-			// Apply dual sin wave offset to create rough edges
+			// Apply dual sine waves for edge roughness
 			positionPhase := float64(x)*0.008 + float64(y)*0.012
 			largeWave := math.Sin(positionPhase) * largeAmplitude
 			smallWave := math.Sin(positionPhase*3.5) * smallAmplitude
 			waveOffset := largeWave + smallWave
 
-			// Effective radius varies based on sin wave
 			effectiveRadius := radius + waveOffset
 
 			if dist <= effectiveRadius {

@@ -11,81 +11,35 @@ import (
 	"github.com/ojrac/opensimplex-go"
 )
 
-// rivers.go
-//
-// New river roughening implementation that uses the heightmap to clip river edges,
-// occasionally creates islands, and is designed to be efficient and multithreadable.
-//
-// This file exposes one main function intended to be called from the river generation
-// pipeline in place of per-pixel painting: `RasterizeAndRoughenRiver`. It:
-//  - rasterizes the river centerline into a local mask (bounding box)
-//  - computes a fast distance field (chamfer approximation) from the centerline
-//  - evaluates a heightmap-aware stochastic rule to remove/add edge pixels to roughen
-//  - occasionally grows islands inside the river
-//  - writes final water pixels back to the provided canvas and updates the provided isWater map
-//
-// Usage (conceptual):
-//   addedPixels := RasterizeAndRoughenRiver(canvas, path, riverWidthPx, heightmap, isWater, seed)
-//
-// NOTE: Because the project already contained a `drawCircle` helper, this new pipeline
-// is implemented as standalone routines in this file. To use it, replace the existing
-// per-circle painting logic in `GenerateRivers` with a call to `RasterizeAndRoughenRiver`.
-//
-// The parameters below were chosen conservatively; tweak them to taste.
-
 type riverParams struct {
-	EdgeBandRatio     float64 // fraction of river radius used for roughening band (e.g. 0.6)
-	RoughnessStrength float64 // 0..1 how aggressive clipping is at the edge
-	IslandAttemptProb float64 // chance per-river to attempt islands
-	IslandSeedChance  float64 // chance per-water-pixel to become an island seed candidate
-	MinIslandSize     int     // minimum island pixel count
-	MaxIslandSize     int     // maximum island pixel count
-	WaterLevelBias    float64 // baseline water level in normalized height units [0..1]; small bias subtracted to favor water
-	NoiseFrequency    float64 // frequency for simplex noise
-	KeepInnerFraction float64 // fraction of inner radius always kept as channel (0..1)
-	MaxWorkers        int     // concurrency limit (0 means runtime.NumCPU())
-	MinWidthPx        float64 // minimum river width in pixels (for sin wave amplitude calculation)
-	MaxWidthPx        float64 // maximum river width in pixels (for sin wave amplitude calculation)
+	EdgeBandRatio     float64
+	RoughnessStrength float64
+	IslandAttemptProb float64
+	IslandSeedChance  float64
+	MinIslandSize     int
+	MaxIslandSize     int
+	WaterLevelBias    float64
+	NoiseFrequency    float64
+	KeepInnerFraction float64
+	MaxWorkers        int
+	MinWidthPx        float64
+	MaxWidthPx        float64
 }
 
-// computeSinWaveEdgeOffset computes the radial offset for river edge roughening
-// using dual sine waves. The larger wave has amplitude based on the difference
-// between max and min river widths, and the smaller wave is a quarter of that amplitude.
-// This creates realistic undulating river banks with both large and small-scale variations.
+// computeSinWaveEdgeOffset computes dual sine wave edge roughening for realistic river banks
 func computeSinWaveEdgeOffset(absX, absY int, largeAmplitude, smallAmplitude float64) float64 {
-	// Use position to create phase for the sine waves
-	// Position phase creates variation as we move through the image
 	positionPhase := float64(absX)*0.008 + float64(absY)*0.012
-
-	// Large wave: slower frequency for major width variations along the bank
 	largeWave := math.Sin(positionPhase) * largeAmplitude
-
-	// Small wave: faster frequency for subtle and natural bank details
 	smallWave := math.Sin(positionPhase*3.5) * smallAmplitude
-
-	// Return combined offset
 	return largeWave + smallWave
 }
 
-// RasterizeAndRoughenRiver rasterizes a river path, roughens edges using the heightmap and dual sin waves,
-// optionally creates islands, paints the final water into `canvas`, and marks pixels in `isWater`.
-// It returns a slice of image.Point containing all newly added water pixels for this river.
-//
-// Parameters:
-// - canvas: destination image (will be modified)
-// - path: ordered centerline points for the river
-// - riverWidthPx: nominal width in pixels
-// - heightmap: heightmap image used to guide roughening (expects 0..1 grayscale via RGBA() conversion)
-// - isWater: map used to record already-water pixels (prevents painting over lakes/rivers). This map will be updated.
-// - seed: random seed to make generation deterministic
-// - minWidthPx: minimum river width in pixels (used for sin wave amplitude calculation)
-// - maxWidthPx: maximum river width in pixels (used for sin wave amplitude calculation)
+// RasterizeAndRoughenRiver rasterizes a river path with natural edge roughening and optional islands
 func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidthPx float64, heightmap image.Image, isWater map[image.Point]bool, seed int64, minWidthPx, maxWidthPx float64) []image.Point {
 	if canvas == nil || len(path) == 0 || riverWidthPx <= 0 {
 		return nil
 	}
 
-	// Default parameters - tweak as needed
 	params := riverParams{
 		EdgeBandRatio:     0.6,
 		RoughnessStrength: 0.65,
@@ -95,7 +49,7 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 		MaxIslandSize:     800,
 		WaterLevelBias:    0.02,
 		NoiseFrequency:    0.02,
-		KeepInnerFraction: 0.85, // keep central 85% of radius
+		KeepInnerFraction: 0.85,
 		MaxWorkers:        0,
 		MinWidthPx:        minWidthPx,
 		MaxWidthPx:        maxWidthPx,
@@ -104,10 +58,8 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 	bounds := canvas.Bounds()
 	imgW, imgH := bounds.Dx(), bounds.Dy()
 
-	// Precompute normalized height grid for faster sampling.
 	heightGrid := precomputeHeightGrid(heightmap, imgW, imgH)
 
-	// Compute bounding box for path expanded by radius + edge band
 	radius := riverWidthPx / 2.0
 	edgeBand := radius * params.EdgeBandRatio
 	expand := int(math.Ceil(radius + edgeBand + 2))
@@ -151,11 +103,8 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 		return nil
 	}
 
-	// Create base raster mask inside bounding box.
-	// baseMask[i] == 1 means inside nominal river radius (before roughening).
 	baseMask := make([]uint8, bw*bh)
 
-	// Rasterize simple circular stamping for each center point into baseMask
 	radiusSq := radius * radius
 	for _, c := range path {
 		cx := c.X - minX
@@ -178,20 +127,15 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 		}
 	}
 
-	// Compute distance field (approximate Euclidean) from centerline (distance 0 at pixels inside baseMask)
 	dist := chamferDistanceField(baseMask, bw, bh)
 
-	// Prepare noise generator
 	noise := opensimplex.New(seed)
 	noiseFreq := params.NoiseFrequency
 
-	// Determine inner keep radius (always keep central channel)
 	innerKeepRadius := radius * params.KeepInnerFraction
 
-	// Prepare final mask
 	finalMask := make([]uint8, bw*bh)
 
-	// Concurrency setup
 	workers := params.MaxWorkers
 	if workers <= 0 {
 		workers = runtime.NumCPU()
@@ -200,18 +144,13 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 	rowsPerWorker := (bh + workers - 1) / workers
 	randBase := rand.New(rand.NewSource(seed))
 
-	// Precompute some weights for the decision formula
 	heightWeight := 2.0 * params.RoughnessStrength
 	distWeight := params.RoughnessStrength
 	noiseWeight := 0.5 * params.RoughnessStrength
 
-	// Compute sin wave amplitudes for realistic edge roughening
-	// Large amplitude is the difference between max and min river widths
-	// Small amplitude is a quarter of the large amplitude for subtle bank details
 	largeAmplitude := params.MaxWidthPx - params.MinWidthPx
 	smallAmplitude := largeAmplitude / 4.0
 
-	// Evaluate per-pixel decision in parallel
 	for wi := 0; wi < workers; wi++ {
 		startY := wi * rowsPerWorker
 		endY := startY + rowsPerWorker
@@ -228,11 +167,8 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 			for y := startY; y < endY; y++ {
 				for x := 0; x < bw; x++ {
 					idx := y*bw + x
-					// If already inside base mask, candidate for water
 					if baseMask[idx] == 1 {
-						// If within inner keep radius: keep always
 						d := dist[idx]
-						// dist is approximate pixels; we compare to innerKeepRadius
 						absX := x + minX
 						absY := y + minY
 						if d <= float32(innerKeepRadius) {
@@ -240,12 +176,9 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 							continue
 						}
 
-						// Apply sin wave offset for realistic edge roughening
 						sinWaveOffset := computeSinWaveEdgeOffset(absX, absY, largeAmplitude, smallAmplitude)
 						effectiveInnerRadius := innerKeepRadius + sinWaveOffset
 
-						// Compute influences
-						// normalizedDist: 0 at effectiveInnerRadius, 1 at effectiveInnerRadius + edgeBand
 						normDist := float64((float32(d) - float32(effectiveInnerRadius)) / float32(edgeBand))
 						if normDist < 0 {
 							normDist = 0
@@ -254,18 +187,15 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 							normDist = 1
 						}
 
-						heightVal := sampleHeightGrid(heightGrid, imgW, imgH, absX, absY) // 0..1
-						// Apply bias so slightly lower areas favor water
+						heightVal := sampleHeightGrid(heightGrid, imgW, imgH, absX, absY)
 						heightAdj := float64(heightVal) - params.WaterLevelBias
 
-						noiseVal := noise.Eval2(float64(absX)*noiseFreq, float64(absY)*noiseFreq) // -1 .. 1
-						noiseNorm := (noiseVal + 1.0) / 2.0                                       // 0..1
+						noiseVal := noise.Eval2(float64(absX)*noiseFreq, float64(absY)*noiseFreq)
+						noiseNorm := (noiseVal + 1.0) / 2.0
 
 						score := distWeight*normDist + heightWeight*heightAdj + noiseWeight*(noiseNorm-0.5)
 
-						// Decision threshold: higher score means more likely land.
 						threshold := 0.35 + 0.5*params.RoughnessStrength
-						// Small stochastic factor to add natural variance
 						if localRand.Float64() < 0.0005 {
 							score += (localRand.Float64() - 0.5) * 0.2
 						}
@@ -282,14 +212,12 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 	}
 	wg.Wait()
 
-	// Optionally attempt islands with small probability
 	randForIsland := rand.New(rand.NewSource(seed + 1234567))
 	tryIslands := randForIsland.Float64() < params.IslandAttemptProb
 	if tryIslands {
 		generateIslandsInMask(finalMask, bw, bh, minX, minY, heightGrid, imgW, imgH, &params, seed+4242)
 	}
 
-	// Paint finalMask to canvas and collect pixels (only those not already water)
 	var added []image.Point
 	for y := 0; y < bh; y++ {
 		absY := y + minY
@@ -308,17 +236,15 @@ func RasterizeAndRoughenRiver(canvas *image.RGBA, path []image.Point, riverWidth
 		}
 	}
 
-	// Small cleanup: remove tiny isolated water pixels (optional - lightweight)
 	removeSpeckles(&finalMask, bw, bh, 2)
 
 	return added
 }
 
-// precomputeHeightGrid converts the heightmap to a float32 grid [0..1] sized width*height.
+// precomputeHeightGrid converts heightmap to normalized float32 grid
 func precomputeHeightGrid(hmap image.Image, width, height int) []float32 {
 	out := make([]float32, width*height)
 	if hmap == nil {
-		// default flat
 		for i := range out {
 			out[i] = 0.5
 		}
@@ -337,7 +263,7 @@ func precomputeHeightGrid(hmap image.Image, width, height int) []float32 {
 	return out
 }
 
-// sampleHeightGrid safe accessor
+// sampleHeightGrid safely samples height at coordinates
 func sampleHeightGrid(grid []float32, width, height, x, y int) float32 {
 	if x < 0 || x >= width || y < 0 || y >= height {
 		return 0.5
@@ -345,14 +271,11 @@ func sampleHeightGrid(grid []float32, width, height, x, y int) float32 {
 	return grid[y*width+x]
 }
 
-// chamferDistanceField computes a fast approximate distance (in pixels) from any pixel to the nearest
-// baseMask==1 pixel. Distance is zero for pixels inside baseMask.
-// This is a two-pass chamfer approximation (float), cheap and parallel friendly.
+// chamferDistanceField computes fast approximate distance from any pixel to centerline
 func chamferDistanceField(baseMask []uint8, w, h int) []float32 {
 	const maxF = 1e6
 	dist := make([]float32, w*h)
 
-	// Initialize
 	for i := 0; i < w*h; i++ {
 		if baseMask[i] == 1 {
 			dist[i] = 0
@@ -368,28 +291,24 @@ func chamferDistanceField(baseMask []uint8, w, h int) []float32 {
 			if dist[i] == 0 {
 				continue
 			}
-			// check left
 			if x > 0 {
 				v := dist[i-1] + 1.0
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check top
 			if y > 0 {
 				v := dist[i-w] + 1.0
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check top-left
 			if x > 0 && y > 0 {
 				v := dist[i-w-1] + 1.41421356
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check top-right
 			if x < w-1 && y > 0 {
 				v := dist[i-w+1] + 1.41421356
 				if v < dist[i] {
@@ -403,28 +322,24 @@ func chamferDistanceField(baseMask []uint8, w, h int) []float32 {
 	for y := h - 1; y >= 0; y-- {
 		for x := w - 1; x >= 0; x-- {
 			i := y*w + x
-			// check right
 			if x < w-1 {
 				v := dist[i+1] + 1.0
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check bottom
 			if y < h-1 {
 				v := dist[i+w] + 1.0
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check bottom-right
 			if x < w-1 && y < h-1 {
 				v := dist[i+w+1] + 1.41421356
 				if v < dist[i] {
 					dist[i] = v
 				}
 			}
-			// check bottom-left
 			if x > 0 && y < h-1 {
 				v := dist[i+w-1] + 1.41421356
 				if v < dist[i] {
@@ -437,15 +352,9 @@ func chamferDistanceField(baseMask []uint8, w, h int) []float32 {
 	return dist
 }
 
-// generateIslandsInMask will attempt to create small islands inside contiguous water areas.
-// It modifies the mask in place (1=water, 0=land). The algorithm:
-//   - choose candidate water pixels with slightly higher-than-water height
-//   - use a small BFS flood constrained by height to form island patches
-//   - reject patches that touch the bounding box edge (we want enclosed islands)
-//   - enforce size limits
+// generateIslandsInMask creates small islands inside water areas
 func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []float32, fullW, fullH int, params *riverParams, seed int64) {
 	r := rand.New(rand.NewSource(seed))
-	// Collect candidates
 	type pt struct{ x, y int }
 	candidates := make([]pt, 0)
 	for y := 0; y < bh; y++ {
@@ -457,7 +366,6 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 			absX := x + minX
 			absY := y + minY
 			hv := sampleHeightGrid(heightGrid, fullW, fullH, absX, absY)
-			// candidate if slightly higher than local water bias
 			if float64(hv) > params.WaterLevelBias+0.03 {
 				if r.Float64() < params.IslandSeedChance {
 					candidates = append(candidates, pt{x, y})
@@ -469,7 +377,6 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 		return
 	}
 
-	// Shuffle candidates to randomize island placement
 	r.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 
 	visited := make([]uint8, bw*bh)
@@ -479,10 +386,8 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 		if visited[ci] != 0 {
 			continue
 		}
-		// BFS grow island
 		maxSize := params.MaxIslandSize
 		minSize := params.MinIslandSize
-		// randomize size a bit
 		targetSize := minSize + r.Intn(maxSize-minSize+1)
 
 		queue := []pt{{c.x, c.y}}
@@ -494,13 +399,11 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 			p := queue[qi]
 			absX := p.x + minX
 			absY := p.y + minY
-			// Height constraint: island must be above a modest threshold
 			hv := sampleHeightGrid(heightGrid, fullW, fullH, absX, absY)
 			if float64(hv) < params.WaterLevelBias+0.01 {
 				continue
 			}
 			island = append(island, p)
-			// Expand
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
 					nx, ny := p.x+dx, p.y+dy
@@ -512,7 +415,6 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 					if visited[nidx] != 0 {
 						continue
 					}
-					// Only grow into water pixels
 					if mask[nidx] != 1 {
 						continue
 					}
@@ -522,24 +424,19 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 			}
 		}
 
-		// If island touches bbox edge, reject it (we want enclosed islands)
 		if touchesEdge {
 			continue
 		}
 
-		// size check
 		if len(island) < minSize {
 			continue
 		}
 
-		// Carve the island: set mask pixels to 0 (land)
 		for _, p := range island {
 			mask[p.y*bw+p.x] = 0
 		}
 
-		// Optionally stop after creating a few islands to keep them rare
 		if r.Float64() < 0.7 {
-			// keep creating more sometimes, break otherwise
 			if r.Intn(3) == 0 {
 				break
 			}
@@ -547,8 +444,7 @@ func generateIslandsInMask(mask []uint8, bw, bh, minX, minY int, heightGrid []fl
 	}
 }
 
-// removeSpeckles removes tiny isolated water components (erodes islands smaller than threshold).
-// This is a simple pass that clears pixels that have fewer than minNeighbors water neighbors.
+// removeSpeckles removes tiny isolated water pixels
 func removeSpeckles(mask *[]uint8, bw, bh, minNeighbors int) {
 	arr := *mask
 	out := make([]uint8, len(arr))
@@ -584,7 +480,7 @@ func removeSpeckles(mask *[]uint8, bw, bh, minNeighbors int) {
 	*mask = arr
 }
 
-// (Optional) utility used for debug or visualization - not used directly in pipeline.
+// maskToPoints converts mask to point slice for visualization
 func maskToPoints(mask []uint8, bw, bh, minX, minY int) []image.Point {
 	var pts []image.Point
 	for y := 0; y < bh; y++ {
@@ -597,7 +493,7 @@ func maskToPoints(mask []uint8, bw, bh, minX, minY int) []image.Point {
 	return pts
 }
 
-// small clamp helpers
+// clamp01 clamps value to 0..1 range
 func clamp01(v float64) float64 {
 	if v < 0 {
 		return 0

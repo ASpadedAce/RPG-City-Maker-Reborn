@@ -16,11 +16,9 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		return nil, nil
 	}
 
-	// Initialize random number generator
 	randSrc := rand.New(rand.NewSource(seed))
 	buildingColor := color.RGBA{R: 128, G: 128, B: 128, A: 255} // Gray color for buildings
 
-	// Create lookup maps for water and road pixels for efficient collision detection
 	isWater := make(map[image.Point]bool)
 	for _, p := range allWaterPixels {
 		isWater[p] = true
@@ -31,13 +29,11 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		isRoad[p] = true
 	}
 
-	// Initialize building data structures
 	isBuilding := make(map[image.Point]bool)
 	var buildings [][]image.Point
 	var allBuildingPixels []image.Point
 	var anchorPoints []image.Point
 
-	// Determine anchor points for building placement
 	if len(roadPixels) > 0 {
 		anchorPoints = roadPixels
 	} else {
@@ -64,7 +60,6 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		return anchorPoints[i].X < anchorPoints[j].X
 	})
 
-	// Collect all land points for random placement
 	landPoints := make([]image.Point, 0, width*height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
@@ -86,10 +81,8 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		// Select an anchor point for the new building
 		var anchor image.Point
 		if randSrc.Float64() > settings.BuildingDistribution/100.0 {
-			// Place near roads or other existing features
 			anchor = anchorPoints[randSrc.Intn(len(anchorPoints))]
 		} else {
-			// Place randomly on any available land
 			if len(landPoints) == 0 {
 				continue // No land to place buildings on
 			}
@@ -152,7 +145,6 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 
 // getProceduralBuildingPixels generates a complex building by connecting multiple shapes.
 func getProceduralBuildingPixels(center image.Point, size float64, settings *Settings, isWater, isRoad, isBuilding map[image.Point]bool, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
-	// Determine complexity
 	complexity := settings.MinBuildingComplexity
 	if settings.BuildingComplexityRatio > randSrc.Float64()*100 {
 		complexity = settings.MinBuildingComplexity + randSrc.Intn(settings.MaxBuildingComplexity-settings.MinBuildingComplexity+1)
@@ -177,7 +169,6 @@ func getProceduralBuildingPixels(center image.Point, size float64, settings *Set
 			newCenter = center
 			buildingCenter = center
 		} else {
-			// Place subsequent components near existing ones
 			prevShape := shapeDescriptions[randSrc.Intn(len(shapeDescriptions))]
 			angle := randSrc.Float64() * 2 * math.Pi
 			dist := componentSize * (0.25 + randSrc.Float64()*0.5) // Overlap between 25% and 75%
@@ -189,7 +180,6 @@ func getProceduralBuildingPixels(center image.Point, size float64, settings *Set
 		shapeDescriptions = append(shapeDescriptions, shapeDescription{shape, newCenter, componentSize})
 	}
 
-	// Find the bounding box of the unscaled building
 	var minX, minY, maxX, maxY int
 	for i, sd := range shapeDescriptions {
 		halfSize := int(sd.size / 2)
@@ -252,7 +242,6 @@ func scalePixels(pixels []image.Point, finalSize float64) []image.Point {
 		return pixels
 	}
 
-	// Find the bounding box of the pixels
 	minX, minY := pixels[0].X, pixels[0].Y
 	maxX, maxY := pixels[0].X, pixels[0].Y
 	for _, p := range pixels {
@@ -274,7 +263,6 @@ func scalePixels(pixels []image.Point, finalSize float64) []image.Point {
 	currentWidth := float64(maxX - minX)
 	currentHeight := float64(maxY - minY)
 
-	// Determine the scaling factor
 	scale := finalSize / math.Max(currentWidth, currentHeight)
 
 	// Calculate the center of the bounding box
@@ -351,7 +339,6 @@ func getComponentPixels(center image.Point, size float64, shape string, randSrc 
 
 // chooseShape selects a building shape based on the provided ratios.
 func chooseShape(randSrc *rand.Rand, ratios map[string]float64) string {
-	// Create a slice of shapes and their cumulative weights
 	var shapes []string
 	var weights []float64
 	var cumulativeWeight float64
@@ -364,7 +351,6 @@ func chooseShape(randSrc *rand.Rand, ratios map[string]float64) string {
 	// Generate a random number between 0 and the total weight
 	randNum := randSrc.Float64() * cumulativeWeight
 
-	// Find the shape corresponding to the random number
 	for i, weight := range weights {
 		if randNum < weight {
 			return shapes[i]
@@ -407,7 +393,6 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 			}
 		}
 	case "rectangles":
-		// Create rectangles with varied aspect ratios
 		longSide := size
 		shortSide := randSrc.Float64()*(size-float64(halfSize)) + float64(halfSize)
 		var w, h int
@@ -418,7 +403,6 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 		}
 		halfW, halfH := w/2, h/2
 
-		// Check for collisions and gather pixels
 		for y := center.Y - halfH; y <= center.Y+halfH; y++ {
 			for x := center.X - halfW; x <= center.X+halfW; x++ {
 				p := image.Point{X: x, Y: y}
@@ -453,7 +437,6 @@ func FlattenBuildingAreas(heightMap *image.RGBA, buildings [][]image.Point, widt
 		return heightMap
 	}
 
-	// Create a copy of the heightmap to avoid modifying the original during processing.
 	newHeightMap := image.NewRGBA(heightMap.Bounds())
 	copy(newHeightMap.Pix, heightMap.Pix)
 
@@ -478,7 +461,6 @@ func FlattenBuildingAreas(heightMap *image.RGBA, buildings [][]image.Point, widt
 				newHeightMap.Set(p.X, p.Y, avgColor)
 			}
 
-			// Create a buffer around the building.
 			buffer := make([]image.Point, 0)
 			for _, p := range building {
 				for y := p.Y - 5; y <= p.Y+5; y++ {

@@ -12,7 +12,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// numericInputSlider is a custom widget that combines a slider and a text entry for numeric input.
+// numericInputSlider combines a slider and text entry for numeric input
 type numericInputSlider struct {
 	widget.BaseWidget
 	value      binding.Float
@@ -52,7 +52,7 @@ func (r *numericInputSliderRenderer) Refresh() {
 
 func (r *numericInputSliderRenderer) Destroy() {}
 
-// newNumericInputSlider creates a new numericInputSlider widget.
+// newNumericInputSlider creates a new numericInputSlider widget
 func newNumericInputSlider(min, max float64, initialValue float64, format string, labelText string) *numericInputSlider {
 	s := &numericInputSlider{
 		min:    min,
@@ -80,7 +80,7 @@ func newNumericInputSlider(min, max float64, initialValue float64, format string
 	return s
 }
 
-// validate checks the text entry for valid numeric input within the defined range.
+// validate checks text entry for valid numeric input within the defined range
 func (s *numericInputSlider) validate(text string, onError func(bool)) {
 	text = strings.TrimSuffix(text, "px")
 	text = strings.TrimSuffix(text, "%")
@@ -104,7 +104,7 @@ func (s *numericInputSlider) validate(text string, onError func(bool)) {
 	s.value.Set(val)
 }
 
-// CreateRenderer is a method required by the Fyne toolkit to render the widget.
+// CreateRenderer renders the widget as required by Fyne toolkit
 func (s *numericInputSlider) CreateRenderer() fyne.WidgetRenderer {
 	r := &numericInputSliderRenderer{
 		slider:       s,
