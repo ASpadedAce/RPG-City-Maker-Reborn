@@ -61,7 +61,7 @@ type riverParams struct {
 }
 
 // GenerateLakes creates lakes on the map using a priority queue growth algorithm
-func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, seed int64, lakeEdgeRoughness float64) (image.Image, [][]image.Point) {
+func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper float64, seed int64, lakeEdgeRoughness float64, lakeShape string) (image.Image, [][]image.Point) {
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
@@ -95,6 +95,12 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	totalArea := float64(width * height)
 	noiseGen := opensimplex.New(seed)
 
+	type lakeBlob struct {
+		dx, dy float64
+		a, b   float64
+		angle  float64
+	}
+
 	// Generate each lake
 	for i := range numLakes {
 		if i >= len(chunkIndices) {
@@ -103,12 +109,70 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 
 		var currentLake []image.Point
 
-		// Randomize lake size within specified range
-		lakeSize := lakeSizeLower
-		if lakeSizeUpper > lakeSizeLower {
-			lakeSize = lakeSizeLower + randSrc.Float64()*(lakeSizeUpper-lakeSizeLower)
+		getRadius := func() float64 {
+			s := lakeSizeLower
+			if lakeSizeUpper > lakeSizeLower {
+				s = lakeSizeLower + randSrc.Float64()*(lakeSizeUpper-lakeSizeLower)
+			}
+			// Maintain the same scale heuristic as original code
+			pixels := totalArea * (s / 100.0) / 2
+			if pixels < 1 {
+				pixels = 1
+			}
+			return math.Sqrt(pixels / math.Pi)
 		}
-		targetPixelsPerLake := int(math.Round(totalArea*(lakeSize/100.0))) / 2
+
+		var blobs []lakeBlob
+		var primaryRadius float64
+
+		switch lakeShape {
+		case "oval":
+			r1 := getRadius()
+			r2 := getRadius()
+			angle := randSrc.Float64() * math.Pi * 2
+			blobs = append(blobs, lakeBlob{0, 0, r1, r2, angle})
+			primaryRadius = (r1 + r2) / 2
+		case "procedural":
+			complexity := 2 + randSrc.Intn(3) // 2 to 4 blobs
+			r1 := getRadius()
+			r2 := r1
+			if randSrc.Float64() > 0.5 {
+				r2 = getRadius()
+			}
+			angle := randSrc.Float64() * math.Pi * 2
+			blobs = append(blobs, lakeBlob{0, 0, r1, r2, angle})
+			primaryRadius = (r1 + r2) / 2
+
+			for k := 1; k < complexity; k++ {
+				parent := blobs[randSrc.Intn(len(blobs))]
+				subR1 := getRadius() * 0.7
+				subR2 := subR1
+				if randSrc.Float64() > 0.5 {
+					subR2 = getRadius() * 0.7
+				}
+				subAngle := randSrc.Float64() * math.Pi * 2
+				dir := randSrc.Float64() * math.Pi * 2
+				dist := (parent.a + subR1) * 0.6 // Overlap
+				newX := parent.dx + math.Cos(dir)*dist
+				newY := parent.dy + math.Sin(dir)*dist
+				blobs = append(blobs, lakeBlob{newX, newY, subR1, subR2, subAngle})
+			}
+		default: // "circle"
+			r := getRadius()
+			blobs = append(blobs, lakeBlob{0, 0, r, r, 0})
+			primaryRadius = r
+		}
+
+		// Calculate estimated target pixels based on blobs (rough approximation)
+		// Since we grow until count is reached, we can just sum areas and discount for overlap
+		estimatedArea := 0.0
+		for _, b := range blobs {
+			estimatedArea += math.Pi * b.a * b.b
+		}
+		if len(blobs) > 1 {
+			estimatedArea *= 0.8 // Heuristic for overlap reduction
+		}
+		targetPixelsPerLake := int(estimatedArea)
 		if targetPixelsPerLake <= 0 {
 			targetPixelsPerLake = 1
 		}
@@ -141,17 +205,35 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		// Setup noise generation for natural lake shapes
 		seedX := randSrc.Float64() * 10000.0
 		seedY := randSrc.Float64() * 10000.0
-		radius := math.Sqrt(float64(targetPixelsPerLake) / math.Pi)
-		noiseFreq := 0.01 + (0.2 / (radius + 1.0))
+
+		noiseFreq := 0.01 + (0.2 / (primaryRadius + 1.0))
 
 		// Score function determines which pixels to add to lake
 		getScore := func(pt image.Point) float64 {
-			dx, dy := pt.X-startPt.X, pt.Y-startPt.Y
-			dist := math.Sqrt(float64(dx*dx + dy*dy))
-			distPenalty := math.Pow(dist/radius, 3.0)
+			dxGlobal := float64(pt.X - startPt.X)
+			dyGlobal := float64(pt.Y - startPt.Y)
+
+			minNormalizedDist := 1e9
+
+			for _, b := range blobs {
+				bdx := dxGlobal - b.dx
+				bdy := dyGlobal - b.dy
+
+				cosA := math.Cos(-b.angle)
+				sinA := math.Sin(-b.angle)
+				rx := bdx*cosA - bdy*sinA
+				ry := bdx*sinA + bdy*cosA
+
+				d := math.Sqrt(math.Pow(rx/b.a, 2) + math.Pow(ry/b.b, 2))
+				if d < minNormalizedDist {
+					minNormalizedDist = d
+				}
+			}
+
+			distPenalty := math.Pow(minNormalizedDist, 3.0)
 
 			if lakeEdgeRoughness > 0 {
-				noise := noiseGen.Eval2(seedX+float64(dx)*noiseFreq, seedY+float64(dy)*noiseFreq)
+				noise := noiseGen.Eval2(seedX+float64(dxGlobal)*noiseFreq, seedY+float64(dyGlobal)*noiseFreq)
 				noiseContribution := noise * (lakeEdgeRoughness / 100.0)
 				return noiseContribution - distPenalty
 			}

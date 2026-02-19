@@ -20,6 +20,7 @@ type Settings struct {
 	LakeSizeLower         float64 `json:"lake_size_lower"`
 	LakeSizeUpper         float64 `json:"lake_size_upper"`
 	LakeEdgeRoughness     float64 `json:"lake_edge_roughness"`
+	LakeShape             string  `json:"lake_shape"`
 	Rivers                int     `json:"rivers"`
 	MinRiverWidth         float64 `json:"min_river_width"`
 	MaxRiverWidth         float64 `json:"max_river_width"`
@@ -117,6 +118,7 @@ func LoadSettings() (*Settings, error) {
 				LakeSizeLower:         1,
 				LakeSizeUpper:         5,
 				LakeEdgeRoughness:     50,
+				LakeShape:             "circle",
 				MinTreeSize:           5,
 				MaxTreeSize:           20,
 				TreeCoverage:          20,
@@ -160,6 +162,10 @@ func LoadSettings() (*Settings, error) {
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&settings); err != nil {
 		return nil, err
+	}
+
+	if settings.LakeShape == "" {
+		settings.LakeShape = "circle"
 	}
 
 	// Ensure BuildingShapeRatios is initialized

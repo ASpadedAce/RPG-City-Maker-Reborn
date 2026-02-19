@@ -153,7 +153,7 @@ func main() {
 		// Step 2: Generating Lakes
 		var lakeImage image.Image
 
-		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness)
+		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
 
 		// Step 3: Generating Rivers
 		var riverImage image.Image
@@ -303,6 +303,12 @@ func main() {
 		val, _ := lakeEdgeRoughnessSlider.value.Get()
 		settings.LakeEdgeRoughness = val
 	}))
+
+	lakeShapeLabel := widget.NewLabel("Lake Shape:")
+	lakeShapeSelect := widget.NewSelect([]string{"circle", "oval", "procedural"}, func(s string) {
+		settings.LakeShape = s
+	})
+	lakeShapeSelect.SetSelected(settings.LakeShape)
 
 	riversSlider := newNumericInputSlider(0, 5, float64(settings.Rivers), "%.0f", "Rivers")
 	riversSlider.entry.OnChanged = func(s string) {
@@ -545,7 +551,7 @@ func main() {
 				progressBar.SetValue(2.0 / 11.0)
 			})
 			var lakeImage image.Image
-			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness)
+			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
 
 			// Step 3: Generating Rivers
 
@@ -714,6 +720,8 @@ func main() {
 		lakeSizeLowerSlider,
 		lakeSizeUpperSlider,
 		lakeEdgeRoughnessSlider,
+		lakeShapeLabel,
+		lakeShapeSelect,
 
 		widget.NewLabel(""), // Spacer
 
