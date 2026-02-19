@@ -72,26 +72,6 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 	var allLakes [][]image.Point
 	randSrc := rand.New(rand.NewSource(seed))
 
-	// Divide the image into a grid to distribute lakes evenly
-	gridDim := int(math.Ceil(math.Sqrt(float64(numLakes))))
-	if gridDim == 0 {
-		return canvas, nil
-	}
-	chunkWidth := width / gridDim
-	chunkHeight := height / gridDim
-	if chunkWidth == 0 || chunkHeight == 0 {
-		return canvas, nil
-	}
-
-	// Shuffle chunk indices for random lake placement
-	chunkIndices := make([]int, gridDim*gridDim)
-	for i := range chunkIndices {
-		chunkIndices[i] = i
-	}
-	randSrc.Shuffle(len(chunkIndices), func(i, j int) {
-		chunkIndices[i], chunkIndices[j] = chunkIndices[j], chunkIndices[i]
-	})
-
 	totalArea := float64(width * height)
 	noiseGen := opensimplex.New(seed)
 
@@ -101,13 +81,20 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 		angle  float64
 	}
 
-	// Generate each lake
-	for i := range numLakes {
-		if i >= len(chunkIndices) {
-			break
-		}
+	type lakeData struct {
+		blobs          []lakeBlob
+		primaryRadius  float64
+		boundingRadius float64
+		targetPixels   int
+		center         image.Point
+		placed         bool
+	}
 
-		var currentLake []image.Point
+	lakesToPlace := make([]*lakeData, numLakes)
+
+	// Phase 1: Generate parameters for all lakes
+	for i := range numLakes {
+		l := &lakeData{}
 
 		getRadius := func() float64 {
 			s := lakeSizeLower
@@ -122,16 +109,13 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			return math.Sqrt(pixels / math.Pi)
 		}
 
-		var blobs []lakeBlob
-		var primaryRadius float64
-
 		switch lakeShape {
 		case "oval":
 			r1 := getRadius()
 			r2 := getRadius()
 			angle := randSrc.Float64() * math.Pi * 2
-			blobs = append(blobs, lakeBlob{0, 0, r1, r2, angle})
-			primaryRadius = (r1 + r2) / 2
+			l.blobs = append(l.blobs, lakeBlob{0, 0, r1, r2, angle})
+			l.primaryRadius = (r1 + r2) / 2
 		case "procedural":
 			complexity := 2 + randSrc.Intn(3) // 2 to 4 blobs
 			r1 := getRadius()
@@ -140,11 +124,11 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 				r2 = getRadius()
 			}
 			angle := randSrc.Float64() * math.Pi * 2
-			blobs = append(blobs, lakeBlob{0, 0, r1, r2, angle})
-			primaryRadius = (r1 + r2) / 2
+			l.blobs = append(l.blobs, lakeBlob{0, 0, r1, r2, angle})
+			l.primaryRadius = (r1 + r2) / 2
 
 			for k := 1; k < complexity; k++ {
-				parent := blobs[randSrc.Intn(len(blobs))]
+				parent := l.blobs[randSrc.Intn(len(l.blobs))]
 				subR1 := getRadius() * 0.7
 				subR2 := subR1
 				if randSrc.Float64() > 0.5 {
@@ -155,67 +139,207 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 				dist := (parent.a + subR1) * 0.6 // Overlap
 				newX := parent.dx + math.Cos(dir)*dist
 				newY := parent.dy + math.Sin(dir)*dist
-				blobs = append(blobs, lakeBlob{newX, newY, subR1, subR2, subAngle})
+				l.blobs = append(l.blobs, lakeBlob{newX, newY, subR1, subR2, subAngle})
 			}
 		default: // "circle"
 			r := getRadius()
-			blobs = append(blobs, lakeBlob{0, 0, r, r, 0})
-			primaryRadius = r
+			l.blobs = append(l.blobs, lakeBlob{0, 0, r, r, 0})
+			l.primaryRadius = r
 		}
 
-		// Calculate estimated target pixels based on blobs (rough approximation)
-		// Since we grow until count is reached, we can just sum areas and discount for overlap
 		estimatedArea := 0.0
-		for _, b := range blobs {
+		maxBlobDist := 0.0
+		for _, b := range l.blobs {
 			estimatedArea += math.Pi * b.a * b.b
+			dist := math.Sqrt(b.dx*b.dx+b.dy*b.dy) + math.Max(b.a, b.b)
+			if dist > maxBlobDist {
+				maxBlobDist = dist
+			}
 		}
-		if len(blobs) > 1 {
-			estimatedArea *= 0.8 // Heuristic for overlap reduction
+		if len(l.blobs) > 1 {
+			estimatedArea *= 0.8
 		}
-		targetPixelsPerLake := int(estimatedArea)
-		if targetPixelsPerLake <= 0 {
-			targetPixelsPerLake = 1
+		l.targetPixels = int(estimatedArea)
+		if l.targetPixels <= 0 {
+			l.targetPixels = 1
+		}
+		l.boundingRadius = maxBlobDist * 1.2
+		lakesToPlace[i] = l
+	}
+
+	// Phase 2: Initial Placement (Tight Packing)
+	var placedLakes []*lakeData
+	for i, l := range lakesToPlace {
+		placed := false
+		// Try random placement first
+		for attempt := 0; attempt < 100; attempt++ {
+			cx := randSrc.Intn(width)
+			cy := randSrc.Intn(height)
+
+			// Relaxed boundary check: center can be anywhere, but let's keep it somewhat reasonable
+			// Allow center to be outside by radius/2
+			margin := int(l.boundingRadius / 2)
+			if cx < -margin || cx >= width+margin || cy < -margin || cy >= height+margin {
+				continue
+			}
+
+			overlap := false
+			for _, other := range placedLakes {
+				dx := float64(cx - other.center.X)
+				dy := float64(cy - other.center.Y)
+				dist := math.Sqrt(dx*dx + dy*dy)
+				if dist < (l.boundingRadius + other.boundingRadius) {
+					overlap = true
+					break
+				}
+			}
+
+			if !overlap {
+				l.center = image.Point{X: cx, Y: cy}
+				l.placed = true
+				placed = true
+				break
+			}
 		}
 
-		chunkIndex := chunkIndices[i]
-		chunkGridX := chunkIndex % gridDim
-		chunkGridY := chunkIndex / gridDim
+		// Fallback: Orbit existing lakes (Tangent placement)
+		if !placed && len(placedLakes) > 0 {
+			indices := randSrc.Perm(len(placedLakes))
+			for _, idx := range indices {
+				targetLake := placedLakes[idx]
+				targetDist := targetLake.boundingRadius + l.boundingRadius // Touching
 
-		chunkRect := image.Rect(
-			chunkGridX*chunkWidth,
-			chunkGridY*chunkHeight,
-			(chunkGridX+1)*chunkWidth,
-			(chunkGridY+1)*chunkHeight,
-		)
+				const angleSteps = 36
+				startAngle := randSrc.Float64() * 2 * math.Pi
 
-		// Initialize priority queue growth algorithm
-		pq := &priorityQueue{}
-		heap.Init(pq)
-		visited := make(map[image.Point]bool)
+				for k := 0; k < angleSteps; k++ {
+					angle := startAngle + (float64(k)/float64(angleSteps))*2*math.Pi
+					cx := int(float64(targetLake.center.X) + math.Cos(angle)*targetDist)
+					cy := int(float64(targetLake.center.Y) + math.Sin(angle)*targetDist)
 
-		// Start growth at chunk center
-		startPt := image.Point{
-			X: chunkRect.Min.X + chunkWidth/2,
-			Y: chunkRect.Min.Y + chunkHeight/2,
+					margin := int(l.boundingRadius / 2)
+					if cx < -margin || cx >= width+margin || cy < -margin || cy >= height+margin {
+						continue
+					}
+
+					overlap := false
+					for _, other := range placedLakes {
+						dx := float64(cx - other.center.X)
+						dy := float64(cy - other.center.Y)
+						dist := math.Sqrt(dx*dx + dy*dy)
+						if dist < (l.boundingRadius + other.boundingRadius) { // Touching check
+							overlap = true
+							break
+						}
+					}
+
+					if !overlap {
+						l.center = image.Point{X: cx, Y: cy}
+						l.placed = true
+						placed = true
+						break
+					}
+				}
+				if placed {
+					break
+				}
+			}
 		}
-		if !startPt.In(chunkRect) {
+
+		if placed {
+			placedLakes = append(placedLakes, l)
+		} else {
+			// Discard lake if it really can't fit
+			lakesToPlace[i] = nil
+		}
+	}
+
+	// Phase 3: Scattering (Relaxation)
+	avgDim := float64(width+height) / 2.0
+	minGap := avgDim * 0.01
+	iterations := len(placedLakes) * 100
+
+	for k := 0; k < iterations; k++ {
+		if len(placedLakes) == 0 {
+			break
+		}
+		idx := randSrc.Intn(len(placedLakes))
+		l := placedLakes[idx]
+
+		// Propose new random position
+		cx := randSrc.Intn(width)
+		cy := randSrc.Intn(height)
+
+		margin := int(l.boundingRadius / 2)
+		if cx < -margin || cx >= width+margin || cy < -margin || cy >= height+margin {
 			continue
 		}
 
-		// Setup noise generation for natural lake shapes
-		seedX := randSrc.Float64() * 10000.0
-		seedY := randSrc.Float64() * 10000.0
+		valid := true
+		for j, other := range placedLakes {
+			if idx == j {
+				continue
+			}
+			dx := float64(cx - other.center.X)
+			dy := float64(cy - other.center.Y)
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist < (l.boundingRadius + other.boundingRadius + minGap) {
+				valid = false
+				break
+			}
+		}
 
-		noiseFreq := 0.01 + (0.2 / (primaryRadius + 1.0))
+		if valid {
+			l.center = image.Point{X: cx, Y: cy}
+		}
+	}
 
-		// Score function determines which pixels to add to lake
+	// Phase 4: Grow lakes at final positions
+	globalVisited := make(map[image.Point]bool)
+	seedX := randSrc.Float64() * 10000.0
+	seedY := randSrc.Float64() * 10000.0
+
+	for _, l := range placedLakes {
+		if l == nil || !l.placed {
+			continue
+		}
+
+		var currentLake []image.Point
+		startPt := l.center
+
+		// Check if start point is within strict bounds for drawing initiation
+		if !startPt.In(image.Rect(0, 0, width, height)) {
+			// Try to find a point within the lake radius that is on the map
+			found := false
+			for r := 0; r < int(l.boundingRadius); r++ {
+				for angle := 0.0; angle < 2*math.Pi; angle += 0.5 {
+					nx := startPt.X + int(float64(r)*math.Cos(angle))
+					ny := startPt.Y + int(float64(r)*math.Sin(angle))
+					pt := image.Point{nx, ny}
+					if pt.In(image.Rect(0, 0, width, height)) {
+						startPt = pt
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if !found {
+				continue // Lake is completely off-screen or unplaceable
+			}
+		}
+
+		noiseFreq := 0.01 + (0.2 / (l.primaryRadius + 1.0))
+
 		getScore := func(pt image.Point) float64 {
-			dxGlobal := float64(pt.X - startPt.X)
-			dyGlobal := float64(pt.Y - startPt.Y)
+			dxGlobal := float64(pt.X - l.center.X)
+			dyGlobal := float64(pt.Y - l.center.Y)
 
 			minNormalizedDist := 1e9
 
-			for _, b := range blobs {
+			for _, b := range l.blobs {
 				bdx := dxGlobal - b.dx
 				bdy := dyGlobal - b.dy
 
@@ -241,19 +365,22 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 			return -distPenalty
 		}
 
+		pq := &priorityQueue{}
+		heap.Init(pq)
 		heap.Push(pq, &lakePixel{point: startPt, score: getScore(startPt)})
-		visited[startPt] = true
+		globalVisited[startPt] = true
 
-		// Grow lake to target size
 		lakeCount := 0
-		for pq.Len() > 0 && lakeCount < targetPixelsPerLake {
+		for pq.Len() > 0 && lakeCount < l.targetPixels {
 			current := heap.Pop(pq).(*lakePixel)
 
-			canvas.Set(current.point.X, current.point.Y, color.RGBA{R: 0, G: 0, B: 255, A: 255})
-			currentLake = append(currentLake, current.point)
+			// Only draw if on canvas
+			if current.point.In(image.Rect(0, 0, width, height)) {
+				canvas.Set(current.point.X, current.point.Y, color.RGBA{R: 0, G: 0, B: 255, A: 255})
+				currentLake = append(currentLake, current.point)
+			}
 			lakeCount++
 
-			// Add neighboring pixels to growth queue
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
 					if dx == 0 && dy == 0 {
@@ -261,11 +388,16 @@ func GenerateLakes(width, height, numLakes int, lakeSizeLower, lakeSizeUpper flo
 					}
 					neighbor := image.Point{X: current.point.X + dx, Y: current.point.Y + dy}
 
-					if !neighbor.In(chunkRect) || visited[neighbor] {
+					if globalVisited[neighbor] {
+						continue
+					}
+					// Allow growth slightly off-screen to ensure shape consistency, but don't track too far
+					if neighbor.X < -int(l.boundingRadius) || neighbor.X >= width+int(l.boundingRadius) ||
+						neighbor.Y < -int(l.boundingRadius) || neighbor.Y >= height+int(l.boundingRadius) {
 						continue
 					}
 
-					visited[neighbor] = true
+					globalVisited[neighbor] = true
 					heap.Push(pq, &lakePixel{
 						point: neighbor,
 						score: getScore(neighbor),
