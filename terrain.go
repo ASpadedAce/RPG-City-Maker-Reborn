@@ -81,15 +81,22 @@ func ApplyRoughness(heightmap image.Image, roughness float64) image.Image {
 	return composite
 }
 
-// DarkenLakeAreas darkens the heightmap where lakes exist
-func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Image {
+// DarkenLakeAreas darkens the heightmap where water exists.
+func DarkenLakeAreas(heightmap image.Image, waterMask *PixelMask) image.Image {
 	bounds := heightmap.Bounds()
 	width := bounds.Dx()
 
 	lakeMask := image.NewRGBA(bounds)
 	black := color.RGBA{0, 0, 0, 255}
-	for _, p := range lakePixels {
-		lakeMask.Set(p.X, p.Y, black)
+	if waterMask != nil {
+		for y := 0; y < waterMask.Height; y++ {
+			row := y * waterMask.Width
+			for x := 0; x < waterMask.Width; x++ {
+				if waterMask.Data[row+x] != 0 {
+					lakeMask.Set(x, y, black)
+				}
+			}
+		}
 	}
 
 	blurRadius := float64(width) * 0.05
@@ -102,18 +109,25 @@ func DarkenLakeAreas(heightmap image.Image, lakePixels []image.Point) image.Imag
 	return composite
 }
 
-// FlattenRoadAreas smooths terrain under roads
-func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Image {
+// FlattenRoadAreas smooths terrain under roads.
+func FlattenRoadAreas(heightmap image.Image, roadMask *PixelMask) image.Image {
 	bounds := heightmap.Bounds()
 	width := bounds.Dx()
 
-	roadMask := image.NewGray(bounds)
-	for _, p := range roadPixels {
-		roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+	roadGrayMask := image.NewGray(bounds)
+	if roadMask != nil {
+		for y := 0; y < roadMask.Height; y++ {
+			row := y * roadMask.Width
+			for x := 0; x < roadMask.Width; x++ {
+				if roadMask.Data[row+x] != 0 {
+					roadGrayMask.SetGray(x, y, color.Gray{Y: 255})
+				}
+			}
+		}
 	}
 
 	blurRadius := float64(width) * 0.01
-	blurredRoadMask := imaging.Blur(roadMask, blurRadius)
+	blurredRoadMask := imaging.Blur(roadGrayMask, blurRadius)
 
 	blurredHeightmap := imaging.Blur(heightmap, blurRadius)
 
@@ -146,8 +160,8 @@ func FlattenRoadAreas(heightmap image.Image, roadPixels []image.Point) image.Ima
 	return composite
 }
 
-// GenerateTrees places trees on the map based on coverage and noise
-func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []image.Point, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) []image.Point {
+// GenerateTrees places trees on the map based on coverage and noise.
+func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) *PixelMask {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
 
@@ -179,19 +193,14 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	}
 	threshold := uint8(255 * (1 - (treeCoverage / 100.0)))
 
-	isLake := make(map[image.Point]bool)
-	for _, p := range lakePixels {
-		isLake[p] = true
+	if waterMask == nil {
+		waterMask = NewPixelMask(width, height)
 	}
-
-	isRoad := make(map[image.Point]bool)
-	for _, p := range roadPixels {
-		isRoad[p] = true
+	if roadMask == nil {
+		roadMask = NewPixelMask(width, height)
 	}
-
-	isBuilding := make(map[image.Point]bool)
-	for _, p := range buildingPixels {
-		isBuilding[p] = true
+	if buildingMask == nil {
+		buildingMask = NewPixelMask(width, height)
 	}
 
 	randSrc := rand.New(rand.NewSource(seed))
@@ -202,7 +211,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	for range numClumpTrees {
 		for range 100 {
 			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
-			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] && !isBuilding[p] {
+			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
 				initialPoints = append(initialPoints, p)
 				break
 			}
@@ -211,10 +220,9 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 
 	minRadius := minTreeSize
 	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
-		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !isLake[p] && !isRoad[p] && !isBuilding[p]
+		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p)
 	}, seed)
 
-	var treePixels []image.Point
 	numGoroutines := runtime.NumCPU()
 	if len(allPoints) < numGoroutines {
 		numGoroutines = len(allPoints)
@@ -251,7 +259,7 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 				for y := p.Y - int(r); y <= p.Y+int(r); y++ {
 					for x := p.X - int(r); x <= p.X+int(r); x++ {
 						pt := image.Point{X: x, Y: y}
-						if !pt.In(img.Bounds()) || isLake[pt] || isRoad[pt] || isBuilding[pt] {
+						if !pt.In(img.Bounds()) || waterMask.GetPoint(pt) || roadMask.GetPoint(pt) || buildingMask.GetPoint(pt) {
 							continue
 						}
 
@@ -269,11 +277,14 @@ func GenerateTrees(img *image.RGBA, lakePixels, roadPixels, buildingPixels []ima
 	wg.Wait()
 	close(results)
 
+	treeMask := NewPixelMask(width, height)
 	for res := range results {
-		treePixels = append(treePixels, res...)
+		for _, p := range res {
+			treeMask.SetPoint(p)
+		}
 	}
 
-	return treePixels
+	return treeMask
 }
 
 // poissonDiscSampling generates randomly distributed points with minimum radius separation

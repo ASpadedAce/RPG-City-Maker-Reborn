@@ -31,8 +31,6 @@ type Road struct {
 	Importance int
 }
 
-var lastExitRoadPixels []image.Point
-
 const (
 	minRoadWidthPercent  = 0.1
 	maxRoadWidthPercent  = 5.0
@@ -81,54 +79,50 @@ func getRoadWidthRangePixels(settings *Settings, width, height int) (float64, fl
 	return minPx, maxPx
 }
 
-func getExitRoadPixels() []image.Point {
-	out := make([]image.Point, len(lastExitRoadPixels))
-	copy(out, lastExitRoadPixels)
-	return out
-}
-
 // GenerateRoads creates roads on the map.
-func GenerateRoads(width, height int, settings *Settings, _ image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, []image.Point, *image.RGBA) {
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
+func GenerateRoads(
+	img *image.RGBA,
+	width,
+	height int,
+	settings *Settings,
+	waterMask *PixelMask,
+	seed int64,
+) (*PixelMask, *PixelMask, *PixelMask, []image.Point) {
+	if img == nil {
+		img = image.NewRGBA(image.Rect(0, 0, width, height))
+	}
 	randSrc := rand.New(rand.NewSource(seed))
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 	bridgeColor := color.RGBA{R: 60, G: 42, B: 33, A: 255}
-	waterMap := make(map[image.Point]bool, len(allWaterPixels))
-	for _, p := range allWaterPixels {
-		waterMap[p] = true
-	}
 
 	roadTarget := estimateRoadTarget(settings, randSrc)
-	pois := generatePOIs(width, height, settings, waterMap, randSrc, roadTarget)
+	pois := generatePOIs(width, height, settings, waterMask, randSrc, roadTarget)
 	if len(pois) < 2 {
-		return nil, nil, img
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
 	}
 
-	roads := connectPOIs(pois, width, height, settings, randSrc, waterMap, roadTarget)
-	roads = appendExitRoads(roads, pois, width, height, settings, randSrc, waterMap)
+	roads := connectPOIs(pois, width, height, settings, randSrc, waterMask, roadTarget)
+	roads = appendExitRoads(roads, pois, width, height, settings, randSrc, waterMask)
 	if len(roads) == 0 {
-		return nil, nil, img
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
 	}
 	assignRoadWidths(roads, settings, randSrc, width, height)
 
-	allRoadPixels := make([]image.Point, 0, len(roads)*64)
-	allBridgePixels := make([]image.Point, 0, len(roads)*16)
-	exitRoadPixels := make([]image.Point, 0, len(roads)*16)
+	roadMask := NewPixelMask(width, height)
+	bridgeMask := NewPixelMask(width, height)
+	exitRoadMask := NewPixelMask(width, height)
 	for _, road := range roads {
-		roadPixels, bridgePixels := drawRoad(img, road.Points, roadColor, bridgeColor, road.Width)
-		allRoadPixels = append(allRoadPixels, roadPixels...)
-		allBridgePixels = append(allBridgePixels, bridgePixels...)
+		drawRoadToMasks(img, road.Points, roadColor, bridgeColor, road.Width, roadMask, bridgeMask)
 		if road.Start.IsExit || road.End.IsExit {
-			exitRoadPixels = append(exitRoadPixels, roadPixels...)
-			exitRoadPixels = append(exitRoadPixels, bridgePixels...)
+			drawRoadToMasks(img, road.Points, roadColor, bridgeColor, road.Width, exitRoadMask, exitRoadMask)
 		}
 	}
-	lastExitRoadPixels = exitRoadPixels
 
-	return allRoadPixels, allBridgePixels, img
+	roadAnchors := roadMask.ToPoints()
+	return roadMask, bridgeMask, exitRoadMask, roadAnchors
 }
 
-func generatePOIs(width, height int, settings *Settings, waterMap map[image.Point]bool, randSrc *rand.Rand, roadTarget int) []*PointOfInterest {
+func generatePOIs(width, height int, settings *Settings, waterMask *PixelMask, randSrc *rand.Rand, roadTarget int) []*PointOfInterest {
 	distribution := clamp01(settings.RoadDistribution / 100.0)
 	minBuildingSizePx, maxBuildingSizePx := getBuildingSizeRangePixels(settings, width, height)
 	avgBuildingSize := (minBuildingSizePx + maxBuildingSizePx) / 2.0
@@ -160,7 +154,7 @@ func generatePOIs(width, height int, settings *Settings, waterMap map[image.Poin
 		}
 		p := image.Point{X: x, Y: y}
 		// Keep larger spacing between intersections so buildings have room.
-		if waterMap[p] || isTooCloseToExisting(pois, x, y, avgBuildingSize*1.1) {
+		if waterMask.GetPoint(p) || isTooCloseToExisting(pois, x, y, avgBuildingSize*1.1) {
 			continue
 		}
 		pois = append(pois, &PointOfInterest{X: x, Y: y, TargetDegree: sampleTargetDegree(randSrc)})
@@ -254,7 +248,7 @@ func sampleTargetDegree(randSrc *rand.Rand) int {
 	}
 }
 
-func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, waterMap map[image.Point]bool, roadTarget int) []*Road {
+func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, waterMask *PixelMask, roadTarget int) []*Road {
 	minAngle := settings.MinRoadAngle * math.Pi / 180.0
 	if minAngle < 0 {
 		minAngle = 0
@@ -399,7 +393,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 	for _, e := range selectedEdges {
 		a := pois[e.a]
 		b := pois[e.b]
-		path := calculateRoadPath(a, b, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMap)
+		path := calculateRoadPath(a, b, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMask)
 		imp := a.Connections + b.Connections + int(math.Round((a.ArterialWeight+b.ArterialWeight)*4))
 		roads = append(roads, &Road{Start: a, End: b, Points: path, Importance: imp})
 	}
@@ -407,7 +401,7 @@ func connectPOIs(pois []*PointOfInterest, width, height int, settings *Settings,
 	return roads
 }
 
-func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, waterMap map[image.Point]bool) []*Road {
+func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, settings *Settings, randSrc *rand.Rand, waterMask *PixelMask) []*Road {
 	if settings.RoadExits <= 0 || len(pois) == 0 {
 		return roads
 	}
@@ -417,7 +411,7 @@ func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, 
 	usedEdgePoints := make([]image.Point, 0, settings.RoadExits)
 
 	for i := 0; i < settings.RoadExits; i++ {
-		edgeNode, ok := sampleNonWaterEdgePOI(width, height, randSrc, waterMap, usedEdgePoints)
+		edgeNode, ok := sampleNonWaterEdgePOI(width, height, randSrc, waterMask, usedEdgePoints)
 		if !ok {
 			continue
 		}
@@ -432,7 +426,7 @@ func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, 
 		edgeNode.TargetDegree = 1
 		edgeNode.Connections = 1
 
-		path := calculateRoadPath(anchor, edgeNode, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMap)
+		path := calculateRoadPath(anchor, edgeNode, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMask)
 		importance := anchor.Connections + edgeNode.Connections + int(math.Round(anchor.ArterialWeight*3))
 		roads = append(roads, &Road{
 			Start:      anchor,
@@ -448,14 +442,14 @@ func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, 
 	return roads
 }
 
-func sampleNonWaterEdgePOI(width, height int, randSrc *rand.Rand, waterMap map[image.Point]bool, used []image.Point) (*PointOfInterest, bool) {
+func sampleNonWaterEdgePOI(width, height int, randSrc *rand.Rand, waterMask *PixelMask, used []image.Point) (*PointOfInterest, bool) {
 	minSpacing := math.Min(float64(width), float64(height)) * 0.08
 	minSpacing2 := minSpacing * minSpacing
 
 	for tries := 0; tries < 120; tries++ {
 		p := sampleEdgePOI(width, height, randSrc)
 		pt := image.Point{X: p.X, Y: p.Y}
-		if waterMap[pt] {
+		if waterMask.GetPoint(pt) {
 			continue
 		}
 		tooClose := false
@@ -614,10 +608,8 @@ func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, wid
 	}
 }
 
-// drawRoad draws a single road on the image including bridges.
-func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int) ([]image.Point, []image.Point) {
-	var roadPixels []image.Point
-	var bridgePixels []image.Point
+// drawRoadToMasks draws a single road on the image including bridges.
+func drawRoadToMasks(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.Color, width int, roadMask, bridgeMask *PixelMask) {
 	bridgeWidth := int(math.Ceil(float64(width) * 1.15))
 	if bridgeWidth < 1 {
 		bridgeWidth = 1
@@ -628,8 +620,7 @@ func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.
 		p2 := points[i+1]
 		isBridge := p1.IsBridge && p2.IsBridge
 		if !isBridge {
-			linePoints := drawLine(img, p1.Point.X, p1.Point.Y, p2.Point.X, p2.Point.Y, roadColor, width)
-			roadPixels = append(roadPixels, linePoints...)
+			drawLineMasked(img, p1.Point.X, p1.Point.Y, p2.Point.X, p2.Point.Y, roadColor, width, roadMask)
 			i++
 			continue
 		}
@@ -640,17 +631,16 @@ func drawRoad(img *image.RGBA, points []PathPoint, roadColor, bridgeColor color.
 		for end < len(points)-1 && points[end].IsBridge && points[end+1].IsBridge {
 			end++
 		}
-		linePoints := drawLine(
+		drawLineMasked(
 			img,
 			points[start].Point.X, points[start].Point.Y,
 			points[end].Point.X, points[end].Point.Y,
 			bridgeColor,
 			bridgeWidth,
+			bridgeMask,
 		)
-		bridgePixels = append(bridgePixels, linePoints...)
 		i = end
 	}
-	return roadPixels, bridgePixels
 }
 
 func bresenhamRoad(path []image.Point) []image.Point {
@@ -693,27 +683,27 @@ func bresenhamRoad(path []image.Point) []image.Point {
 }
 
 // calculateRoadPath computes the path for a road including curves and bridges.
-func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, waterMap map[image.Point]bool) []PathPoint {
+func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, randSrc *rand.Rand, waterMask *PixelMask) []PathPoint {
 	dx := end.X - start.X
 	dy := end.Y - start.Y
 	dist := math.Hypot(float64(dx), float64(dy))
 
 	if dist == 0 {
 		p := image.Point{X: start.X, Y: start.Y}
-		return []PathPoint{{Point: p, IsBridge: waterMap[p]}}
+		return []PathPoint{{Point: p, IsBridge: waterMask.GetPoint(p)}}
 	}
 
 	curve := clamp(curvyness, 0, 1)
 	if curve <= 0 {
 		points := bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
-		return toPathPoints(points, waterMap)
+		return toPathPoints(points, waterMask)
 	}
 
 	// Non-linear scaling: low values stay fairly straight, high values become very winding.
 	strength := math.Pow(curve, 1.35)
 	if strength < 0.001 {
 		points := bresenhamRoad([]image.Point{{X: start.X, Y: start.Y}, {X: end.X, Y: end.Y}})
-		return toPathPoints(points, waterMap)
+		return toPathPoints(points, waterMask)
 	}
 
 	baseControls := int(math.Max(12, dist/(22.0-14.0*strength)))
@@ -774,20 +764,19 @@ func calculateRoadPath(start, end *PointOfInterest, curvyness, avgDim float64, r
 	}
 
 	points := bresenhamRoad(controlPoints)
-	return toPathPoints(points, waterMap)
+	return toPathPoints(points, waterMask)
 }
 
-func toPathPoints(points []image.Point, waterMap map[image.Point]bool) []PathPoint {
+func toPathPoints(points []image.Point, waterMask *PixelMask) []PathPoint {
 	pathPoints := make([]PathPoint, len(points))
 	for i, p := range points {
-		pathPoints[i] = PathPoint{Point: p, IsBridge: waterMap[p]}
+		pathPoints[i] = PathPoint{Point: p, IsBridge: waterMask.GetPoint(p)}
 	}
 	return pathPoints
 }
 
-// drawLine draws a line with specified width on the image.
-func drawLine(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int) []image.Point {
-	var points []image.Point
+// drawLineMasked draws a line with specified width on the image and mask.
+func drawLineMasked(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int, mask *PixelMask) {
 	dx := abs(x1 - x0)
 	dy := -abs(y1 - y0)
 	sx := -1
@@ -807,7 +796,9 @@ func drawLine(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int) [
 				py := y0 + j
 				if img.Bounds().Min.X <= px && px < img.Bounds().Max.X && img.Bounds().Min.Y <= py && py < img.Bounds().Max.Y {
 					img.Set(px, py, col)
-					points = append(points, image.Point{X: px, Y: py})
+					if mask != nil {
+						mask.SetXY(px, py)
+					}
 				}
 			}
 		}
@@ -825,7 +816,6 @@ func drawLine(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width int) [
 			y0 += sy
 		}
 	}
-	return points
 }
 
 func clamp(v, lo, hi float64) float64 {

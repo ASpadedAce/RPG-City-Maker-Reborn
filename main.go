@@ -55,12 +55,14 @@ func main() {
 
 	// Initialize slices to store generated map features
 	var lakes [][]image.Point
-	var riverPixels []image.Point
-	var treePixels []image.Point
-	var buildingPixels []image.Point
 	var buildings [][]image.Point
-	var roadPixels []image.Point
-	var bridgePixels []image.Point
+	var waterMask *PixelMask
+	var riverMask *PixelMask
+	var treeMask *PixelMask
+	var buildingMask *PixelMask
+	var roadMask *PixelMask
+	var bridgeMask *PixelMask
+	var exitRoadMask *PixelMask
 
 	// Set up application configuration directory
 	configDir, err := os.UserConfigDir()
@@ -157,47 +159,31 @@ func main() {
 
 		// Step 3: Generating Rivers
 		var riverImage image.Image
-
-		riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
+		riverImage, riverMask = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
 
 		finalImage := riverImage.(*image.RGBA)
-
-		var roadImage *image.RGBA
-
-		var flatLakePixels []image.Point
-
-		for _, lake := range lakes {
-
-			flatLakePixels = append(flatLakePixels, lake...)
-
+		waterMask = BuildMaskFromLakes(settings.Width, settings.Height, lakes)
+		if riverMask != nil {
+			waterMask.Merge(riverMask)
 		}
-
-		allWaterPixels := append(flatLakePixels, riverPixels...)
 		// Step 4: Generating Roads
-		roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next())
-		for y := 0; y < roadImage.Bounds().Max.Y; y++ {
-			for x := 0; x < roadImage.Bounds().Max.X; x++ {
-				r, g, b, a := roadImage.At(x, y).RGBA()
-				if a > 0 {
-					finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
-				}
-			}
-		}
+		var roadAnchors []image.Point
+		roadMask, bridgeMask, exitRoadMask, roadAnchors = GenerateRoads(finalImage, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
 
 		// Step 5: Generating Buildings
-		buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+		buildings, buildingMask = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
 
 		// Step 6: Generating Trees
-		treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+		treeMask = GenerateTrees(finalImage, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 		// Step 7: Darkening Water Areas
-		darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
+		darkenedHeightmap := DarkenLakeAreas(noiseImg, waterMask)
 
 		// Step 8: Flattening Building Areas
 		flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
 		// Step 9: Flattening Road Areas
-		flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
+		flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadMask)
 
 		// Step 10: Applying Roughness
 		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
@@ -519,7 +505,7 @@ func main() {
 		showSaveDialog(w, bumpmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels, buildings)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverMask, treeMask, roadMask, bridgeMask, buildingMask)
 	})
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
@@ -560,15 +546,13 @@ func main() {
 				progressBar.SetValue(3.0 / 11.0)
 			})
 			var riverImage image.Image
-			riverImage, riverPixels = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
+			riverImage, riverMask = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
 
 			finalImage := riverImage.(*image.RGBA)
-
-			var flatLakePixels []image.Point
-			for _, lake := range lakes {
-				flatLakePixels = append(flatLakePixels, lake...)
+			waterMask = BuildMaskFromLakes(settings.Width, settings.Height, lakes)
+			if riverMask != nil {
+				waterMask.Merge(riverMask)
 			}
-			allWaterPixels := append(flatLakePixels, riverPixels...)
 
 			// Step 4: Generating Roads
 
@@ -576,16 +560,8 @@ func main() {
 				progressLabel.SetText("Step 4 of 11: Generating Roads")
 				progressBar.SetValue(4.0 / 11.0)
 			})
-			var roadImage *image.RGBA
-			roadPixels, bridgePixels, roadImage = GenerateRoads(settings.Width, settings.Height, settings, noiseImg, allWaterPixels, seedProvider.Next()) // Draw roadImage over finalImage
-			for y := 0; y < roadImage.Bounds().Max.Y; y++ {
-				for x := 0; x < roadImage.Bounds().Max.X; x++ {
-					r, g, b, a := roadImage.At(x, y).RGBA()
-					if a > 0 {
-						finalImage.Set(x, y, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
-					}
-				}
-			}
+			var roadAnchors []image.Point
+			roadMask, bridgeMask, exitRoadMask, roadAnchors = GenerateRoads(finalImage, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
 
 			// Step 5: Generating Buildings
 
@@ -593,7 +569,7 @@ func main() {
 				progressLabel.SetText("Step 5 of 11: Generating Buildings")
 				progressBar.SetValue(5.0 / 11.0)
 			})
-			buildings, buildingPixels = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadPixels, allWaterPixels, seedProvider.Next())
+			buildings, buildingMask = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
 
 			// Step 6: Darkening Water Areas
 
@@ -601,7 +577,7 @@ func main() {
 				progressLabel.SetText("Step 6 of 11: Darkening Water Areas")
 				progressBar.SetValue(6.0 / 11.0)
 			})
-			darkenedHeightmap := DarkenLakeAreas(noiseImg, allWaterPixels)
+			darkenedHeightmap := DarkenLakeAreas(noiseImg, waterMask)
 
 			// Step 7: Flattening Building Areas
 
@@ -615,7 +591,7 @@ func main() {
 				progressLabel.SetText("Step 8 of 11: Flattening Road Areas")
 				progressBar.SetValue(8.0 / 11.0)
 			})
-			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadPixels)
+			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadMask)
 
 			// Step 8: Applying Roughness
 
@@ -631,7 +607,7 @@ func main() {
 				progressLabel.SetText("Step 10 of 11: Generating Trees")
 				progressBar.SetValue(10.0 / 11.0)
 			})
-			treePixels = GenerateTrees(finalImage, allWaterPixels, roadPixels, buildingPixels, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+			treeMask = GenerateTrees(finalImage, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 
 			// Step 10: Generating Bump Map
 
@@ -1105,7 +1081,7 @@ func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverPixels, treePixels, roadPixels, bridgePixels, buildingPixels []image.Point, buildings [][]image.Point) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverMask, treeMask, roadMask, bridgeMask, buildingMask *PixelMask) {
 	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
@@ -1152,6 +1128,21 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 		}
 		imgFormat := strings.ToLower(formatSelect.Selected)
 		bounds := canvasImg.Bounds()
+		maskToGray := func(mask *PixelMask) *image.Gray {
+			out := image.NewGray(bounds)
+			if mask == nil {
+				return out
+			}
+			for y := 0; y < mask.Height; y++ {
+				row := y * mask.Width
+				for x := 0; x < mask.Width; x++ {
+					if mask.Data[row+x] != 0 {
+						out.SetGray(x, y, color.Gray{Y: 255})
+					}
+				}
+			}
+			return out
+		}
 
 		// Create mask images from the generated data
 		lakeMask := image.NewGray(bounds)
@@ -1160,39 +1151,22 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 				lakeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
 			}
 		}
-		riverMask := image.NewGray(bounds)
-		for _, p := range riverPixels {
-			riverMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
-		}
-		treeMask := image.NewGray(bounds)
-		for _, p := range treePixels {
-			treeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
-		}
-		roadMask := image.NewGray(bounds)
-		for _, p := range roadPixels {
-			roadMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
-		}
-		bridgeMask := image.NewGray(bounds)
-		for _, p := range bridgePixels {
-			bridgeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
-		}
-		buildingMask := image.NewGray(bounds)
-		for _, building := range buildings {
-			for _, p := range building {
-				buildingMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
-			}
-		}
+		riverMaskImg := maskToGray(riverMask)
+		treeMaskImg := maskToGray(treeMask)
+		roadMaskImg := maskToGray(roadMask)
+		bridgeMaskImg := maskToGray(bridgeMask)
+		buildingMaskImg := maskToGray(buildingMask)
 
 		imagesToSave := map[string]image.Image{
 			"canvas." + imgFormat:         canvasImg,
 			"heightmap." + imgFormat:      heightmapImg,
 			"bump_map." + imgFormat:       bumpmapImg,
 			"lakes_mask." + imgFormat:     lakeMask,
-			"rivers_mask." + imgFormat:    riverMask,
-			"trees_mask." + imgFormat:     treeMask,
-			"roads_mask." + imgFormat:     roadMask,
-			"bridges_mask." + imgFormat:   bridgeMask,
-			"buildings_mask." + imgFormat: buildingMask,
+			"rivers_mask." + imgFormat:    riverMaskImg,
+			"trees_mask." + imgFormat:     treeMaskImg,
+			"roads_mask." + imgFormat:     roadMaskImg,
+			"bridges_mask." + imgFormat:   bridgeMaskImg,
+			"buildings_mask." + imgFormat: buildingMaskImg,
 		}
 		// Save the images based on the selected packaging option
 		switch packageSelect.Selected {

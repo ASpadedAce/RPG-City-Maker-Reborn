@@ -62,7 +62,17 @@ func getBuildingSizeRangePixels(settings *Settings, width, height int) (float64,
 }
 
 // GenerateBuildings creates and places buildings on the map.
-func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, roadPixels, allWaterPixels []image.Point, seed int64) ([][]image.Point, []image.Point) {
+func GenerateBuildings(
+	img *image.RGBA,
+	width,
+	height int,
+	settings *Settings,
+	roadAnchors []image.Point,
+	waterMask,
+	roadMask,
+	exitRoadMask *PixelMask,
+	seed int64,
+) ([][]image.Point, *PixelMask) {
 	// Early exit if no buildings are to be generated
 	if settings.NumBuildings == 0 {
 		return nil, nil
@@ -70,32 +80,25 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 
 	randSrc := rand.New(rand.NewSource(seed))
 	buildingColor := color.RGBA{R: 128, G: 128, B: 128, A: 255} // Gray color for buildings
-
-	isWater := make(map[image.Point]bool)
-	for _, p := range allWaterPixels {
-		isWater[p] = true
+	if waterMask == nil {
+		waterMask = NewPixelMask(width, height)
 	}
-
-	isRoad := make(map[image.Point]bool)
-	for _, p := range roadPixels {
-		isRoad[p] = true
+	if roadMask == nil {
+		roadMask = NewPixelMask(width, height)
 	}
-	isExitRoad := make(map[image.Point]bool)
-	for _, p := range getExitRoadPixels() {
-		isExitRoad[p] = true
+	if exitRoadMask == nil {
+		exitRoadMask = NewPixelMask(width, height)
 	}
-
-	isBuilding := make(map[image.Point]bool)
+	buildingMask := NewPixelMask(width, height)
 	var buildings [][]image.Point
-	var allBuildingPixels []image.Point
 	var anchorPoints []image.Point
 	var normalRoadAnchors []image.Point
 	var exitRoadAnchors []image.Point
 
-	if len(roadPixels) > 0 {
-		anchorPoints = roadPixels
+	if len(roadAnchors) > 0 {
+		anchorPoints = roadAnchors
 		for _, p := range anchorPoints {
-			if isExitRoad[p] {
+			if exitRoadMask.GetPoint(p) {
 				exitRoadAnchors = append(exitRoadAnchors, p)
 			} else {
 				normalRoadAnchors = append(normalRoadAnchors, p)
@@ -106,7 +109,7 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				p := image.Point{X: x, Y: y}
-				if !isWater[p] {
+				if !waterMask.GetPoint(p) {
 					anchorPoints = append(anchorPoints, p)
 				}
 			}
@@ -129,7 +132,7 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			p := image.Point{X: x, Y: y}
-			if !isWater[p] && !isRoad[p] {
+			if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) {
 				landPoints = append(landPoints, p)
 			}
 		}
@@ -196,17 +199,16 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 			var ok bool
 
 			if shape == "procedural" {
-				pixels, ok = getProceduralBuildingPixels(center, size, settings, isWater, isRoad, isBuilding, width, height, randSrc)
+				pixels, ok = getProceduralBuildingPixels(center, size, settings, waterMask, roadMask, buildingMask, width, height, randSrc)
 			} else {
-				pixels, ok = getBuildingPixels(center, size, shape, isWater, isRoad, isBuilding, width, height, randSrc)
+				pixels, ok = getBuildingPixels(center, size, shape, waterMask, roadMask, buildingMask, width, height, randSrc)
 			}
 
 			if ok {
 				// If successful, draw the building and update data structures
 				for _, p := range pixels {
 					img.Set(p.X, p.Y, buildingColor)
-					isBuilding[p] = true
-					allBuildingPixels = append(allBuildingPixels, p)
+					buildingMask.SetPoint(p)
 				}
 				buildings = append(buildings, pixels)
 				buildingsPlaced++
@@ -214,11 +216,11 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 			}
 		}
 	}
-	return buildings, allBuildingPixels
+	return buildings, buildingMask
 }
 
 // getProceduralBuildingPixels generates a complex building by connecting multiple shapes.
-func getProceduralBuildingPixels(center image.Point, size float64, settings *Settings, isWater, isRoad, isBuilding map[image.Point]bool, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
+func getProceduralBuildingPixels(center image.Point, size float64, settings *Settings, waterMask, roadMask, buildingMask *PixelMask, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
 	complexity := settings.MinBuildingComplexity
 	if settings.BuildingComplexityRatio > randSrc.Float64()*100 {
 		complexity = settings.MinBuildingComplexity + randSrc.Intn(settings.MaxBuildingComplexity-settings.MinBuildingComplexity+1)
@@ -293,7 +295,7 @@ func getProceduralBuildingPixels(center image.Point, size float64, settings *Set
 			continue
 		}
 		for _, p := range pixels {
-			if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+			if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || waterMask.GetPoint(p) || roadMask.GetPoint(p) || buildingMask.GetPoint(p) {
 				return nil, false
 			}
 			if !pixelMap[p] {
@@ -436,7 +438,7 @@ func chooseShape(randSrc *rand.Rand, ratios map[string]float64) string {
 }
 
 // getBuildingPixels determines the pixels for a single building based on its shape and checks for collisions.
-func getBuildingPixels(center image.Point, size float64, shape string, isWater, isRoad, isBuilding map[image.Point]bool, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
+func getBuildingPixels(center image.Point, size float64, shape string, waterMask, roadMask, buildingMask *PixelMask, width, height int, randSrc *rand.Rand) ([]image.Point, bool) {
 	var pixels []image.Point
 	var halfSize = int(size / 2)
 
@@ -446,7 +448,7 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 		for y := center.Y - halfSize; y <= center.Y+halfSize; y++ {
 			for x := center.X - halfSize; x <= center.X+halfSize; x++ {
 				p := image.Point{X: x, Y: y}
-				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || waterMask.GetPoint(p) || roadMask.GetPoint(p) || buildingMask.GetPoint(p) {
 					return nil, false // Collision detected
 				}
 				pixels = append(pixels, p)
@@ -459,7 +461,7 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 				dx, dy := float64(x-center.X), float64(y-center.Y)
 				if dx*dx+dy*dy <= r2 {
 					p := image.Point{X: x, Y: y}
-					if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+					if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || waterMask.GetPoint(p) || roadMask.GetPoint(p) || buildingMask.GetPoint(p) {
 						return nil, false // Collision detected
 					}
 					pixels = append(pixels, p)
@@ -480,7 +482,7 @@ func getBuildingPixels(center image.Point, size float64, shape string, isWater, 
 		for y := center.Y - halfH; y <= center.Y+halfH; y++ {
 			for x := center.X - halfW; x <= center.X+halfW; x++ {
 				p := image.Point{X: x, Y: y}
-				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || isWater[p] || isRoad[p] || isBuilding[p] {
+				if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height || waterMask.GetPoint(p) || roadMask.GetPoint(p) || buildingMask.GetPoint(p) {
 					return nil, false // Collision detected
 				}
 				pixels = append(pixels, p)

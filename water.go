@@ -899,7 +899,7 @@ func clamp01(v float64) float64 {
 }
 
 // GenerateRivers creates rivers flowing across the map from edge to edge
-func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) (image.Image, []image.Point) {
+func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness float64, inputImage image.Image, lakes [][]image.Point, seed int64, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) (image.Image, *PixelMask) {
 	if numRivers == 0 {
 		return inputImage, nil
 	}
@@ -910,16 +910,15 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		draw.Draw(canvas, canvas.Bounds(), inputImage, image.Point{}, draw.Src)
 	}
 
-	var allRiverPixels []image.Point
+	riverMask := NewPixelMask(width, height)
 	randSrc := rand.New(rand.NewSource(seed))
 	avgDim := float64(width+height) / 2.0
 
 	// Build water pixel lookup maps
-	isWater := make(map[image.Point]bool)
+	isWater := BuildMaskFromLakes(width, height, lakes)
 	lakePixelMap := make(map[image.Point]int)
 	for i, lake := range lakes {
 		for _, p := range lake {
-			isWater[p] = true
 			lakePixelMap[p] = i
 		}
 	}
@@ -957,7 +956,7 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 
 		// Check for intersections with existing water
 		for _, p := range path {
-			if isWater[p] {
+			if isWater.GetPoint(p) {
 				if lakeIndex, isLake := lakePixelMap[p]; isLake {
 					// End river at lake center if it intersects
 					lakeCenter := findCenter(lakes[lakeIndex])
@@ -976,12 +975,12 @@ func GenerateRivers(width, height, numRivers int, minWidth, maxWidth, curvyness 
 		radius := riverWidthPx / 2.0
 
 		for _, p := range path {
-			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, &allRiverPixels, isWater, heightmap, riverWidthVariability, riverEdgeRoughness)
+			drawCircle(canvas, p, radius, color.RGBA{R: 0, G: 0, B: 255, A: 255}, riverMask, isWater, heightmap, riverWidthVariability, riverEdgeRoughness)
 		}
 		r.Points = path
 	}
 
-	return canvas, allRiverPixels
+	return canvas, riverMask
 }
 
 // bresenhamRiver draws a line between control points using Bresenham's algorithm
@@ -1118,7 +1117,7 @@ func getPointOnEdge(width, height, edge int, randSrc *rand.Rand) image.Point {
 }
 
 // drawCircle draws a circular river cross-section with sine wave edge roughening
-func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, pixels *[]image.Point, isWater map[image.Point]bool, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) {
+func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Color, riverMask, isWater *PixelMask, heightmap image.Image, riverWidthVariability, riverEdgeRoughness float64) {
 	bounds := img.Bounds()
 
 	largeAmplitude := (radius * 0.5) * (riverWidthVariability / 100.0)
@@ -1143,10 +1142,10 @@ func drawCircle(img *image.RGBA, center image.Point, radius float64, c color.Col
 			effectiveRadius := radius + waveOffset
 
 			if dist <= effectiveRadius {
-				if !isWater[p] {
+				if !isWater.GetPoint(p) {
 					img.Set(x, y, c)
-					*pixels = append(*pixels, p)
-					isWater[p] = true
+					riverMask.SetPoint(p)
+					isWater.SetPoint(p)
 				}
 			}
 		}
