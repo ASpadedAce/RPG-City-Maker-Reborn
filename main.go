@@ -429,7 +429,7 @@ func main() {
 		val, _ := treeClumpinessSlider.value.Get()
 		settings.TreeClumpiness = val
 	}))
-	minRoadWidthSlider := newNumericInputSlider(1, 150, settings.MinRoadWidth, "%.0fpx", "Min Road Width")
+	minRoadWidthSlider := newNumericInputSliderWithStep(minRoadWidthPercent, maxRoadWidthPercent, settings.MinRoadWidth, roadWidthPercentStep, "%.1f%%", "Min Road Width")
 	minRoadWidthSlider.entry.OnChanged = func(s string) {
 		minRoadWidthSlider.validate(s, func(hasError bool) {
 			errorStates["minRoadWidth"] = hasError
@@ -441,7 +441,7 @@ func main() {
 		settings.MinRoadWidth = val
 	}))
 
-	maxRoadWidthSlider := newNumericInputSlider(1, 150, settings.MaxRoadWidth, "%.0fpx", "Max Road Width")
+	maxRoadWidthSlider := newNumericInputSliderWithStep(minRoadWidthPercent, maxRoadWidthPercent, settings.MaxRoadWidth, roadWidthPercentStep, "%.1f%%", "Max Road Width")
 	maxRoadWidthSlider.entry.OnChanged = func(s string) {
 		maxRoadWidthSlider.validate(s, func(hasError bool) {
 			errorStates["maxRoadWidth"] = hasError
@@ -753,7 +753,7 @@ func main() {
 		settings.NumBuildings = int(val)
 	}))
 
-	minBuildingSizeSlider := newNumericInputSlider(1, 150, settings.MinBuildingSize, "%.0fpx", "Min Building Size")
+	minBuildingSizeSlider := newNumericInputSliderWithStep(minBuildingSizePercent, maxBuildingSizePercent, settings.MinBuildingSize, buildingSizePercentStep, "%.1f%%", "Min Building Size")
 	minBuildingSizeSlider.entry.OnChanged = func(s string) {
 		minBuildingSizeSlider.validate(s, func(hasError bool) {
 			errorStates["minBuildingSize"] = hasError
@@ -765,7 +765,7 @@ func main() {
 		settings.MinBuildingSize = val
 	}))
 
-	maxBuildingSizeSlider := newNumericInputSlider(1, 150, settings.MaxBuildingSize, "%.0fpx", "Max Building Size")
+	maxBuildingSizeSlider := newNumericInputSliderWithStep(minBuildingSizePercent, maxBuildingSizePercent, settings.MaxBuildingSize, buildingSizePercentStep, "%.1f%%", "Max Building Size")
 	maxBuildingSizeSlider.entry.OnChanged = func(s string) {
 		maxBuildingSizeSlider.validate(s, func(hasError bool) {
 			errorStates["maxBuildingSize"] = hasError

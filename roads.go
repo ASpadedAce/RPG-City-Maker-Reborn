@@ -33,6 +33,54 @@ type Road struct {
 
 var lastExitRoadPixels []image.Point
 
+const (
+	minRoadWidthPercent  = 0.1
+	maxRoadWidthPercent  = 5.0
+	roadWidthPercentStep = 0.1
+)
+
+func clampRoadWidthPercent(v float64) float64 {
+	if v < minRoadWidthPercent {
+		return minRoadWidthPercent
+	}
+	if v > maxRoadWidthPercent {
+		return maxRoadWidthPercent
+	}
+	return v
+}
+
+func snapRoadWidthPercent(v float64) float64 {
+	v = clampRoadWidthPercent(v)
+	steps := math.Round((v - minRoadWidthPercent) / roadWidthPercentStep)
+	return clampRoadWidthPercent(minRoadWidthPercent + steps*roadWidthPercentStep)
+}
+
+func normalizeRoadWidthPercentRange(minPercent, maxPercent float64) (float64, float64) {
+	minPercent = snapRoadWidthPercent(minPercent)
+	maxPercent = snapRoadWidthPercent(maxPercent)
+	if minPercent > maxPercent {
+		minPercent, maxPercent = maxPercent, minPercent
+	}
+	return minPercent, maxPercent
+}
+
+func getRoadWidthRangePixels(settings *Settings, width, height int) (float64, float64) {
+	minPercent, maxPercent := normalizeRoadWidthPercentRange(settings.MinRoadWidth, settings.MaxRoadWidth)
+	avgDim := averageImageDimension(width, height)
+	if avgDim < 1 {
+		avgDim = 1
+	}
+	minPx := (minPercent / 100.0) * avgDim
+	maxPx := (maxPercent / 100.0) * avgDim
+	if minPx < 1 {
+		minPx = 1
+	}
+	if maxPx < 1 {
+		maxPx = 1
+	}
+	return minPx, maxPx
+}
+
 func getExitRoadPixels() []image.Point {
 	out := make([]image.Point, len(lastExitRoadPixels))
 	copy(out, lastExitRoadPixels)
@@ -61,7 +109,7 @@ func GenerateRoads(width, height int, settings *Settings, _ image.Image, allWate
 	if len(roads) == 0 {
 		return nil, nil, img
 	}
-	assignRoadWidths(roads, settings, randSrc)
+	assignRoadWidths(roads, settings, randSrc, width, height)
 
 	allRoadPixels := make([]image.Point, 0, len(roads)*64)
 	allBridgePixels := make([]image.Point, 0, len(roads)*16)
@@ -82,7 +130,8 @@ func GenerateRoads(width, height int, settings *Settings, _ image.Image, allWate
 
 func generatePOIs(width, height int, settings *Settings, waterMap map[image.Point]bool, randSrc *rand.Rand, roadTarget int) []*PointOfInterest {
 	distribution := clamp01(settings.RoadDistribution / 100.0)
-	avgBuildingSize := (settings.MinBuildingSize + settings.MaxBuildingSize) / 2.0
+	minBuildingSizePx, maxBuildingSizePx := getBuildingSizeRangePixels(settings, width, height)
+	avgBuildingSize := (minBuildingSizePx + maxBuildingSizePx) / 2.0
 	if avgBuildingSize < 1 {
 		avgBuildingSize = 1
 	}
@@ -512,13 +561,12 @@ func normalizeAngle(a float64) float64 {
 	return a
 }
 
-func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand) {
+func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, width, height int) {
 	if len(roads) == 0 {
 		return
 	}
 
-	minWidth := settings.MinRoadWidth
-	maxWidth := settings.MaxRoadWidth
+	minWidth, maxWidth := getRoadWidthRangePixels(settings, width, height)
 	if maxWidth < minWidth {
 		minWidth, maxWidth = maxWidth, minWidth
 	}

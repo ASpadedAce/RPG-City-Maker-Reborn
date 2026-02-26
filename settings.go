@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -130,15 +131,15 @@ func LoadSettings() (*Settings, error) {
 				RiverCurvyness:        50,
 				RiverWidthVariability: 50,
 				RiverEdgeRoughness:    50,
-				MinRoadWidth:          2,
-				MaxRoadWidth:          8,
+				MinRoadWidth:          0.7,
+				MaxRoadWidth:          2.7,
 				RoadExits:             5,
 				RoadCurvyness:         50,
 				RoadDistribution:      50,
 				MinRoadAngle:          18,
 				NumBuildings:          200,
-				MinBuildingSize:       10,
-				MaxBuildingSize:       30,
+				MinBuildingSize:       3.5,
+				MaxBuildingSize:       10.0,
 				BuildingDistribution:  20,
 				BuildingShape:         "mixed",
 				BuildingShapeRatios: map[string]float64{
@@ -157,17 +158,19 @@ func LoadSettings() (*Settings, error) {
 	}
 	defer file.Close()
 
-	// Decode through a wrapper so we can tell whether newer fields were present.
-	type settingsDisk struct {
-		Settings
-		MinRoadAngle *float64 `json:"min_road_angle"`
-	}
-	var disk settingsDisk
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&disk); err != nil {
+	// Decode once into Settings, and separately inspect raw keys for field-presence checks.
+	raw, err := io.ReadAll(file)
+	if err != nil {
 		return nil, err
 	}
-	settings := disk.Settings
+	var settings Settings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return nil, err
+	}
+	var rawKeys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawKeys); err != nil {
+		return nil, err
+	}
 
 	if settings.LakeShape == "" {
 		settings.LakeShape = "circle"
@@ -192,9 +195,33 @@ func LoadSettings() (*Settings, error) {
 	if settings.BuildingComplexityRatio == 0 {
 		settings.BuildingComplexityRatio = 50
 	}
-	if disk.MinRoadAngle == nil {
+	if _, ok := rawKeys["min_road_angle"]; !ok {
 		settings.MinRoadAngle = 18
 	}
+
+	// Road widths are percentages of average image dimension.
+	// Migrate older pixel-based values when they exceed the valid percentage range.
+	if settings.MinRoadWidth > maxRoadWidthPercent || settings.MaxRoadWidth > maxRoadWidthPercent {
+		avgDim := averageImageDimension(settings.Width, settings.Height)
+		if avgDim < 1 {
+			avgDim = 1
+		}
+		settings.MinRoadWidth = (settings.MinRoadWidth / avgDim) * 100.0
+		settings.MaxRoadWidth = (settings.MaxRoadWidth / avgDim) * 100.0
+	}
+	settings.MinRoadWidth, settings.MaxRoadWidth = normalizeRoadWidthPercentRange(settings.MinRoadWidth, settings.MaxRoadWidth)
+
+	// Building sizes are percentages of average image dimension.
+	// Migrate older pixel-based values when they exceed the valid percentage range.
+	if settings.MinBuildingSize > maxBuildingSizePercent || settings.MaxBuildingSize > maxBuildingSizePercent {
+		avgDim := averageImageDimension(settings.Width, settings.Height)
+		if avgDim < 1 {
+			avgDim = 1
+		}
+		settings.MinBuildingSize = (settings.MinBuildingSize / avgDim) * 100.0
+		settings.MaxBuildingSize = (settings.MaxBuildingSize / avgDim) * 100.0
+	}
+	settings.MinBuildingSize, settings.MaxBuildingSize = normalizeBuildingSizePercentRange(settings.MinBuildingSize, settings.MaxBuildingSize)
 
 	// Ensure LastExportPath is set to a default value if it's empty
 	if settings.LastExportPath == "" {

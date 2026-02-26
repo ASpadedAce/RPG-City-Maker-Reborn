@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -42,6 +43,7 @@ type numericInputSlider struct {
 	widget.BaseWidget
 	value      binding.Float
 	min, max   float64
+	step       float64
 	slider     *widget.Slider
 	entry      *widget.Entry
 	format     string
@@ -83,6 +85,7 @@ func newNumericInputSlider(min, max float64, initialValue float64, format string
 		min:    min,
 		max:    max,
 		format: format,
+		step:   0,
 	}
 	s.ExtendBaseWidget(s)
 
@@ -105,6 +108,17 @@ func newNumericInputSlider(min, max float64, initialValue float64, format string
 	return s
 }
 
+func newNumericInputSliderWithStep(min, max, initialValue, step float64, format string, labelText string) *numericInputSlider {
+	s := newNumericInputSlider(min, max, initialValue, format, labelText)
+	if step > 0 {
+		s.step = step
+		s.slider.Step = step
+		rounded := min + math.Round((initialValue-min)/step)*step
+		s.value.Set(rounded)
+	}
+	return s
+}
+
 // validate checks text entry for valid numeric input within the defined range
 func (s *numericInputSlider) validate(text string, onError func(bool)) {
 	text = strings.TrimSpace(text)
@@ -121,10 +135,25 @@ func (s *numericInputSlider) validate(text string, onError func(bool)) {
 	}
 
 	if val < s.min || val > s.max {
-		s.errorLabel.SetText(fmt.Sprintf("Out of range (%.0f-%.0f)", s.min, s.max))
+		s.errorLabel.SetText(fmt.Sprintf(
+			"Out of range (%s-%s)",
+			strconv.FormatFloat(s.min, 'f', -1, 64),
+			strconv.FormatFloat(s.max, 'f', -1, 64),
+		))
 		s.errorLabel.Show()
 		onError(true)
 		return
+	}
+	if s.step > 0 {
+		steps := math.Round((val - s.min) / s.step)
+		snapped := s.min + steps*s.step
+		if math.Abs(val-snapped) > 1e-9 {
+			s.errorLabel.SetText(fmt.Sprintf("Use increments of %s", strconv.FormatFloat(s.step, 'f', -1, 64)))
+			s.errorLabel.Show()
+			onError(true)
+			return
+		}
+		val = snapped
 	}
 
 	s.errorLabel.Hide()

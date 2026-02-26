@@ -9,6 +9,58 @@ import (
 	"sync"
 )
 
+const (
+	minBuildingSizePercent  = 0.5
+	maxBuildingSizePercent  = 25.0
+	buildingSizePercentStep = 0.5
+)
+
+func averageImageDimension(width, height int) float64 {
+	return (float64(width) + float64(height)) / 2.0
+}
+
+func clampBuildingSizePercent(v float64) float64 {
+	if v < minBuildingSizePercent {
+		return minBuildingSizePercent
+	}
+	if v > maxBuildingSizePercent {
+		return maxBuildingSizePercent
+	}
+	return v
+}
+
+func snapBuildingSizePercent(v float64) float64 {
+	v = clampBuildingSizePercent(v)
+	steps := math.Round((v - minBuildingSizePercent) / buildingSizePercentStep)
+	return clampBuildingSizePercent(minBuildingSizePercent + steps*buildingSizePercentStep)
+}
+
+func normalizeBuildingSizePercentRange(minPercent, maxPercent float64) (float64, float64) {
+	minPercent = snapBuildingSizePercent(minPercent)
+	maxPercent = snapBuildingSizePercent(maxPercent)
+	if minPercent > maxPercent {
+		minPercent, maxPercent = maxPercent, minPercent
+	}
+	return minPercent, maxPercent
+}
+
+func getBuildingSizeRangePixels(settings *Settings, width, height int) (float64, float64) {
+	minPercent, maxPercent := normalizeBuildingSizePercentRange(settings.MinBuildingSize, settings.MaxBuildingSize)
+	avgDim := averageImageDimension(width, height)
+	if avgDim < 1 {
+		avgDim = 1
+	}
+	minPx := (minPercent / 100.0) * avgDim
+	maxPx := (maxPercent / 100.0) * avgDim
+	if minPx < 1 {
+		minPx = 1
+	}
+	if maxPx < 1 {
+		maxPx = 1
+	}
+	return minPx, maxPx
+}
+
 // GenerateBuildings creates and places buildings on the map.
 func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, roadPixels, allWaterPixels []image.Point, seed int64) ([][]image.Point, []image.Point) {
 	// Early exit if no buildings are to be generated
@@ -87,6 +139,7 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 	buildingsPlaced := 0
 	searchTries := 100                                // Number of attempts to find a spot for a building around an anchor
 	maxPlacementAttempts := settings.NumBuildings * 5 // To prevent infinite loops
+	minBuildingSizePx, maxBuildingSizePx := getBuildingSizeRangePixels(settings, width, height)
 
 	for buildingsPlaced < settings.NumBuildings && maxPlacementAttempts > 0 {
 		maxPlacementAttempts--
@@ -133,7 +186,7 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 			}
 
 			// Attempt to create a building at the selected center
-			size := settings.MinBuildingSize + randSrc.Float64()*(settings.MaxBuildingSize-settings.MinBuildingSize)
+			size := minBuildingSizePx + randSrc.Float64()*(maxBuildingSizePx-minBuildingSizePx)
 			shape := settings.BuildingShape
 			if shape == "mixed" {
 				shape = chooseShape(randSrc, settings.BuildingShapeRatios)
