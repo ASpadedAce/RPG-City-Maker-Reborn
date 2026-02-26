@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"image/png"
 	"log"
@@ -27,6 +28,36 @@ import (
 
 	"github.com/chai2010/webp"
 )
+
+const generationStepTimeout = time.Minute
+
+func runWithTimeout[T any](timeout time.Duration, fn func() T) (T, bool) {
+	ch := make(chan T, 1)
+	go func() {
+		ch <- fn()
+	}()
+	select {
+	case out := <-ch:
+		return out, true
+	case <-time.After(timeout):
+		var zero T
+		return zero, false
+	}
+}
+
+func cloneToRGBA(src image.Image, width, height int) *image.RGBA {
+	if src == nil {
+		return image.NewRGBA(image.Rect(0, 0, width, height))
+	}
+	if rgba, ok := src.(*image.RGBA); ok {
+		out := image.NewRGBA(rgba.Bounds())
+		copy(out.Pix, rgba.Pix)
+		return out
+	}
+	out := image.NewRGBA(src.Bounds())
+	draw.Draw(out, out.Bounds(), src, image.Point{}, draw.Src)
+	return out
+}
 
 func main() {
 	// Initialize the Fyne application and window
@@ -151,30 +182,112 @@ func main() {
 		// Step 1: Generating Heightmap
 		seedProvider := NewSeedProvider(settings.Seed)
 		noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
+		prevBuildings := settings.NumBuildings
+		cappedBuildings := capRequestedBuildingsToFit(settings, settings.Width, settings.Height)
+		if cappedBuildings < prevBuildings {
+			log.Printf("Building count capped from %d to %d based on image size and average building size.\n", prevBuildings, cappedBuildings)
+		}
 
-		// Step 2: Generating Lakes
-		var lakeImage image.Image
+		// Step 2: Generating Lakes (timeout: 1 minute)
+		var lakeImage image.Image = image.NewRGBA(image.Rect(0, 0, settings.Width, settings.Height))
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			img image.Image
+			lks [][]image.Point
+		} {
+			img, lks := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
+			return struct {
+				img image.Image
+				lks [][]image.Point
+			}{img: img, lks: lks}
+		}); ok {
+			lakeImage = out.img
+			lakes = out.lks
+		} else {
+			log.Println("GenerateLakes timed out after 1 minute; continuing.")
+			lakes = nil
+		}
 
-		lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
-
-		// Step 3: Generating Rivers
-		var riverImage image.Image
-		riverImage, riverMask = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
-
-		finalImage := riverImage.(*image.RGBA)
+		// Step 3: Generating Rivers (timeout: 1 minute)
+		riverBase := cloneToRGBA(lakeImage, settings.Width, settings.Height)
+		var finalImage *image.RGBA = riverBase
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			img  image.Image
+			rmsk *PixelMask
+		} {
+			img, rmsk := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, riverBase, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
+			return struct {
+				img  image.Image
+				rmsk *PixelMask
+			}{img: img, rmsk: rmsk}
+		}); ok {
+			riverMask = out.rmsk
+			finalImage = cloneToRGBA(out.img, settings.Width, settings.Height)
+		} else {
+			log.Println("GenerateRivers timed out after 1 minute; continuing.")
+			riverMask = NewPixelMask(settings.Width, settings.Height)
+		}
 		waterMask = BuildMaskFromLakes(settings.Width, settings.Height, lakes)
 		if riverMask != nil {
 			waterMask.Merge(riverMask)
 		}
 		// Step 4: Generating Roads
 		var roadAnchors []image.Point
-		roadMask, bridgeMask, exitRoadMask, roadAnchors = GenerateRoads(finalImage, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+		roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			rd  *PixelMask
+			br  *PixelMask
+			ex  *PixelMask
+			anc []image.Point
+		} {
+			rd, br, ex, anc := GenerateRoads(roadBase, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+			return struct {
+				rd  *PixelMask
+				br  *PixelMask
+				ex  *PixelMask
+				anc []image.Point
+			}{rd: rd, br: br, ex: ex, anc: anc}
+		}); ok {
+			roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+			finalImage = roadBase
+		} else {
+			log.Println("GenerateRoads timed out after 1 minute; continuing.")
+			roadMask = NewPixelMask(settings.Width, settings.Height)
+			bridgeMask = NewPixelMask(settings.Width, settings.Height)
+			exitRoadMask = NewPixelMask(settings.Width, settings.Height)
+			roadAnchors = nil
+		}
 
 		// Step 5: Generating Buildings
-		buildings, buildingMask = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+		buildingBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			blds [][]image.Point
+			bmsk *PixelMask
+		} {
+			blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+			return struct {
+				blds [][]image.Point
+				bmsk *PixelMask
+			}{blds: blds, bmsk: bmsk}
+		}); ok {
+			buildings, buildingMask = out.blds, out.bmsk
+			finalImage = buildingBase
+		} else {
+			log.Println("GenerateBuildings timed out after 1 minute; continuing.")
+			buildings = nil
+			buildingMask = NewPixelMask(settings.Width, settings.Height)
+		}
 
 		// Step 6: Generating Trees
-		treeMask = GenerateTrees(finalImage, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+		treeBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+		if out, ok := runWithTimeout(generationStepTimeout, func() *PixelMask {
+			return GenerateTrees(treeBase, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+		}); ok {
+			treeMask = out
+			finalImage = treeBase
+		} else {
+			log.Println("GenerateTrees timed out after 1 minute; continuing.")
+			treeMask = NewPixelMask(settings.Width, settings.Height)
+		}
 
 		// Step 7: Darkening Water Areas
 		darkenedHeightmap := DarkenLakeAreas(noiseImg, waterMask)
@@ -523,6 +636,11 @@ func main() {
 				})
 			}()
 			seedProvider := NewSeedProvider(settings.Seed)
+			prevBuildings := settings.NumBuildings
+			cappedBuildings := capRequestedBuildingsToFit(settings, settings.Width, settings.Height)
+			if cappedBuildings < prevBuildings {
+				log.Printf("Building count capped from %d to %d based on image size and average building size.\n", prevBuildings, cappedBuildings)
+			}
 			// Step 1: Generating Heightmap
 			fyne.Do(func() {
 				progressLabel.SetText("Step 1 of 11: Generating Heightmap")
@@ -536,8 +654,23 @@ func main() {
 				progressLabel.SetText("Step 2 of 11: Generating Lakes")
 				progressBar.SetValue(2.0 / 11.0)
 			})
-			var lakeImage image.Image
-			lakeImage, lakes = GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
+			var lakeImage image.Image = image.NewRGBA(image.Rect(0, 0, settings.Width, settings.Height))
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				img image.Image
+				lks [][]image.Point
+			} {
+				img, lks := GenerateLakes(settings.Width, settings.Height, settings.Lakes, settings.LakeSizeLower, settings.LakeSizeUpper, seedProvider.Next(), settings.LakeEdgeRoughness, settings.LakeShape)
+				return struct {
+					img image.Image
+					lks [][]image.Point
+				}{img: img, lks: lks}
+			}); ok {
+				lakeImage = out.img
+				lakes = out.lks
+			} else {
+				log.Println("GenerateLakes timed out after 1 minute; continuing.")
+				lakes = nil
+			}
 
 			// Step 3: Generating Rivers
 
@@ -545,10 +678,24 @@ func main() {
 				progressLabel.SetText("Step 3 of 11: Generating Rivers")
 				progressBar.SetValue(3.0 / 11.0)
 			})
-			var riverImage image.Image
-			riverImage, riverMask = GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, lakeImage, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
-
-			finalImage := riverImage.(*image.RGBA)
+			riverBase := cloneToRGBA(lakeImage, settings.Width, settings.Height)
+			finalImage := riverBase
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				img  image.Image
+				rmsk *PixelMask
+			} {
+				img, rmsk := GenerateRivers(settings.Width, settings.Height, settings.Rivers, settings.MinRiverWidth, settings.MaxRiverWidth, settings.RiverCurvyness, riverBase, lakes, seedProvider.Next(), noiseImg, settings.RiverWidthVariability, settings.RiverEdgeRoughness)
+				return struct {
+					img  image.Image
+					rmsk *PixelMask
+				}{img: img, rmsk: rmsk}
+			}); ok {
+				riverMask = out.rmsk
+				finalImage = cloneToRGBA(out.img, settings.Width, settings.Height)
+			} else {
+				log.Println("GenerateRivers timed out after 1 minute; continuing.")
+				riverMask = NewPixelMask(settings.Width, settings.Height)
+			}
 			waterMask = BuildMaskFromLakes(settings.Width, settings.Height, lakes)
 			if riverMask != nil {
 				waterMask.Merge(riverMask)
@@ -561,7 +708,30 @@ func main() {
 				progressBar.SetValue(4.0 / 11.0)
 			})
 			var roadAnchors []image.Point
-			roadMask, bridgeMask, exitRoadMask, roadAnchors = GenerateRoads(finalImage, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+			roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				rd  *PixelMask
+				br  *PixelMask
+				ex  *PixelMask
+				anc []image.Point
+			} {
+				rd, br, ex, anc := GenerateRoads(roadBase, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+				return struct {
+					rd  *PixelMask
+					br  *PixelMask
+					ex  *PixelMask
+					anc []image.Point
+				}{rd: rd, br: br, ex: ex, anc: anc}
+			}); ok {
+				roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+				finalImage = roadBase
+			} else {
+				log.Println("GenerateRoads timed out after 1 minute; continuing.")
+				roadMask = NewPixelMask(settings.Width, settings.Height)
+				bridgeMask = NewPixelMask(settings.Width, settings.Height)
+				exitRoadMask = NewPixelMask(settings.Width, settings.Height)
+				roadAnchors = nil
+			}
 
 			// Step 5: Generating Buildings
 
@@ -569,7 +739,24 @@ func main() {
 				progressLabel.SetText("Step 5 of 11: Generating Buildings")
 				progressBar.SetValue(5.0 / 11.0)
 			})
-			buildings, buildingMask = GenerateBuildings(finalImage, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+			buildingBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				blds [][]image.Point
+				bmsk *PixelMask
+			} {
+				blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+				return struct {
+					blds [][]image.Point
+					bmsk *PixelMask
+				}{blds: blds, bmsk: bmsk}
+			}); ok {
+				buildings, buildingMask = out.blds, out.bmsk
+				finalImage = buildingBase
+			} else {
+				log.Println("GenerateBuildings timed out after 1 minute; continuing.")
+				buildings = nil
+				buildingMask = NewPixelMask(settings.Width, settings.Height)
+			}
 
 			// Step 6: Darkening Water Areas
 
@@ -607,7 +794,16 @@ func main() {
 				progressLabel.SetText("Step 10 of 11: Generating Trees")
 				progressBar.SetValue(10.0 / 11.0)
 			})
-			treeMask = GenerateTrees(finalImage, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+			treeBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+			if out, ok := runWithTimeout(generationStepTimeout, func() *PixelMask {
+				return GenerateTrees(treeBase, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+			}); ok {
+				treeMask = out
+				finalImage = treeBase
+			} else {
+				log.Println("GenerateTrees timed out after 1 minute; continuing.")
+				treeMask = NewPixelMask(settings.Width, settings.Height)
+			}
 
 			// Step 10: Generating Bump Map
 

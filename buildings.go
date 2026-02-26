@@ -61,6 +61,32 @@ func getBuildingSizeRangePixels(settings *Settings, width, height int) (float64,
 	return minPx, maxPx
 }
 
+func getMaxBuildingsForImage(settings *Settings, width, height int) int {
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	minSizePx, maxSizePx := getBuildingSizeRangePixels(settings, width, height)
+	avgSizePx := (minSizePx + maxSizePx) / 2.0
+	if avgSizePx < 1 {
+		avgSizePx = 1
+	}
+	// Treat average building size as a side length to estimate per-building footprint.
+	avgFootprint := avgSizePx * avgSizePx
+	maxBuildings := int(float64(width*height) / avgFootprint)
+	if maxBuildings < 1 {
+		maxBuildings = 1
+	}
+	return maxBuildings
+}
+
+func capRequestedBuildingsToFit(settings *Settings, width, height int) int {
+	maxBuildings := getMaxBuildingsForImage(settings, width, height)
+	if settings.NumBuildings > maxBuildings {
+		settings.NumBuildings = maxBuildings
+	}
+	return settings.NumBuildings
+}
+
 // GenerateBuildings creates and places buildings on the map.
 func GenerateBuildings(
 	img *image.RGBA,
