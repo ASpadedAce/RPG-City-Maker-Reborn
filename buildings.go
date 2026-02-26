@@ -87,6 +87,31 @@ func capRequestedBuildingsToFit(settings *Settings, width, height int) int {
 	return settings.NumBuildings
 }
 
+func sampleRandomLandPoint(width, height int, waterMask, roadMask *PixelMask, randSrc *rand.Rand) (image.Point, bool) {
+	const randomTries = 128
+	for i := 0; i < randomTries; i++ {
+		p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
+		if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) {
+			return p, true
+		}
+	}
+	if width <= 0 || height <= 0 {
+		return image.Point{}, false
+	}
+	start := randSrc.Intn(width * height)
+	total := width * height
+	for i := 0; i < total; i++ {
+		idx := (start + i) % total
+		x := idx % width
+		y := idx / width
+		p := image.Point{X: x, Y: y}
+		if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) {
+			return p, true
+		}
+	}
+	return image.Point{}, false
+}
+
 // GenerateBuildings creates and places buildings on the map.
 func GenerateBuildings(
 	img *image.RGBA,
@@ -130,38 +155,21 @@ func GenerateBuildings(
 				normalRoadAnchors = append(normalRoadAnchors, p)
 			}
 		}
-	} else {
-		// If no roads, use all land pixels as anchors
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				p := image.Point{X: x, Y: y}
-				if !waterMask.GetPoint(p) {
-					anchorPoints = append(anchorPoints, p)
-				}
-			}
-		}
 	}
 
-	// Early exit if no anchor points are available
+	// Early exit if no anchors and no valid land.
 	if len(anchorPoints) == 0 {
-		return nil, nil
-	}
-	// Sort anchor points for deterministic placement
-	sort.Slice(anchorPoints, func(i, j int) bool {
-		if anchorPoints[i].Y != anchorPoints[j].Y {
-			return anchorPoints[i].Y < anchorPoints[j].Y
+		if _, ok := sampleRandomLandPoint(width, height, waterMask, roadMask, randSrc); !ok {
+			return nil, nil
 		}
-		return anchorPoints[i].X < anchorPoints[j].X
-	})
-
-	landPoints := make([]image.Point, 0, width*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			p := image.Point{X: x, Y: y}
-			if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) {
-				landPoints = append(landPoints, p)
+	} else {
+		// Sort anchor points for deterministic placement
+		sort.Slice(anchorPoints, func(i, j int) bool {
+			if anchorPoints[i].Y != anchorPoints[j].Y {
+				return anchorPoints[i].Y < anchorPoints[j].Y
 			}
-		}
+			return anchorPoints[i].X < anchorPoints[j].X
+		})
 	}
 
 	// Main loop for placing buildings
@@ -182,14 +190,21 @@ func GenerateBuildings(
 				anchor = exitRoadAnchors[randSrc.Intn(len(exitRoadAnchors))]
 			} else if len(normalRoadAnchors) > 0 {
 				anchor = normalRoadAnchors[randSrc.Intn(len(normalRoadAnchors))]
-			} else {
+			} else if len(anchorPoints) > 0 {
 				anchor = anchorPoints[randSrc.Intn(len(anchorPoints))]
+			} else {
+				p, ok := sampleRandomLandPoint(width, height, waterMask, roadMask, randSrc)
+				if !ok {
+					continue
+				}
+				anchor = p
 			}
 		} else {
-			if len(landPoints) == 0 {
+			p, ok := sampleRandomLandPoint(width, height, waterMask, roadMask, randSrc)
+			if !ok {
 				continue // No land to place buildings on
 			}
-			anchor = landPoints[randSrc.Intn(len(landPoints))]
+			anchor = p
 		}
 
 		// Search for a valid building location around the anchor

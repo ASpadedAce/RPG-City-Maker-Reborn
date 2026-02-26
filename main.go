@@ -11,6 +11,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -1261,19 +1262,16 @@ func main() {
 	w.ShowAndRun()
 }
 
-// getImageData encodes an image to the specified format and returns the data as a byte buffer.
-func getImageData(img image.Image, format string) (*bytes.Buffer, error) {
-	buf := new(bytes.Buffer)
-	var err error
+func encodeImageToWriter(w io.Writer, img image.Image, format string) error {
 	switch format {
 	case "PNG":
-		err = png.Encode(buf, img)
+		return png.Encode(w, img)
 	case "JPG":
-		err = jpeg.Encode(buf, img, nil)
+		return jpeg.Encode(w, img, nil)
 	case "WEBP":
-		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
+		return webp.Encode(w, img, &webp.Options{Lossless: true})
 	}
-	return buf, err
+	return fmt.Errorf("unsupported format: %s", format)
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
@@ -1324,7 +1322,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 		}
 		imgFormat := strings.ToLower(formatSelect.Selected)
 		bounds := canvasImg.Bounds()
-		maskToGray := func(mask *PixelMask) *image.Gray {
+		maskToGray := func(mask *PixelMask) image.Image {
 			out := image.NewGray(bounds)
 			if mask == nil {
 				return out
@@ -1339,31 +1337,31 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 			}
 			return out
 		}
-
-		// Create mask images from the generated data
-		lakeMask := image.NewGray(bounds)
-		for _, lake := range lakes {
-			for _, p := range lake {
-				lakeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+		buildLakeMask := func() image.Image {
+			lakeMask := image.NewGray(bounds)
+			for _, lake := range lakes {
+				for _, p := range lake {
+					lakeMask.SetGray(p.X, p.Y, color.Gray{Y: 255})
+				}
 			}
+			return lakeMask
 		}
-		riverMaskImg := maskToGray(riverMask)
-		treeMaskImg := maskToGray(treeMask)
-		roadMaskImg := maskToGray(roadMask)
-		bridgeMaskImg := maskToGray(bridgeMask)
-		buildingMaskImg := maskToGray(buildingMask)
+		type exportItem struct {
+			name string
+			make func() image.Image
+		}
+		items := []exportItem{
+			{name: "canvas." + imgFormat, make: func() image.Image { return canvasImg }},
+			{name: "heightmap." + imgFormat, make: func() image.Image { return heightmapImg }},
+			{name: "bump_map." + imgFormat, make: func() image.Image { return bumpmapImg }},
+			{name: "lakes_mask." + imgFormat, make: buildLakeMask},
+			{name: "rivers_mask." + imgFormat, make: func() image.Image { return maskToGray(riverMask) }},
+			{name: "trees_mask." + imgFormat, make: func() image.Image { return maskToGray(treeMask) }},
+			{name: "roads_mask." + imgFormat, make: func() image.Image { return maskToGray(roadMask) }},
+			{name: "bridges_mask." + imgFormat, make: func() image.Image { return maskToGray(bridgeMask) }},
+			{name: "buildings_mask." + imgFormat, make: func() image.Image { return maskToGray(buildingMask) }},
+		}
 
-		imagesToSave := map[string]image.Image{
-			"canvas." + imgFormat:         canvasImg,
-			"heightmap." + imgFormat:      heightmapImg,
-			"bump_map." + imgFormat:       bumpmapImg,
-			"lakes_mask." + imgFormat:     lakeMask,
-			"rivers_mask." + imgFormat:    riverMaskImg,
-			"trees_mask." + imgFormat:     treeMaskImg,
-			"roads_mask." + imgFormat:     roadMaskImg,
-			"bridges_mask." + imgFormat:   bridgeMaskImg,
-			"buildings_mask." + imgFormat: buildingMaskImg,
-		}
 		// Save the images based on the selected packaging option
 		switch packageSelect.Selected {
 		case "Folder":
@@ -1373,8 +1371,8 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 				return
 			}
 			settings.LastExportPath = exportPath
-			for name, img := range imagesToSave {
-				saveImage(img, filepath.Join(exportPath, name))
+			for _, item := range items {
+				saveImage(item.make(), filepath.Join(exportPath, item.name))
 			}
 		case "tar.gz":
 			filePath := filepath.Join(pathLabel.Text, folderName+".tar.gz")
@@ -1390,24 +1388,24 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 			defer gw.Close()
 			tw := tar.NewWriter(gw)
 			defer tw.Close()
-
-			for name, img := range imagesToSave {
-				buf, err := getImageData(img, formatSelect.Selected)
-				if err != nil {
-					log.Printf("Error encoding image %s: %v\n", name, err)
+			var buf bytes.Buffer
+			for _, item := range items {
+				buf.Reset()
+				if err := encodeImageToWriter(&buf, item.make(), formatSelect.Selected); err != nil {
+					log.Printf("Error encoding image %s: %v\n", item.name, err)
 					continue
 				}
 				hdr := &tar.Header{
-					Name: name,
+					Name: item.name,
 					Mode: 0644,
 					Size: int64(buf.Len()),
 				}
 				if err := tw.WriteHeader(hdr); err != nil {
-					log.Printf("Error writing tar header for %s: %v\n", name, err)
+					log.Printf("Error writing tar header for %s: %v\n", item.name, err)
 					continue
 				}
 				if _, err := tw.Write(buf.Bytes()); err != nil {
-					log.Printf("Error writing tar data for %s: %v\n", name, err)
+					log.Printf("Error writing tar data for %s: %v\n", item.name, err)
 				}
 			}
 		case "zip":
@@ -1423,19 +1421,15 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 			zw := zip.NewWriter(file)
 			defer zw.Close()
 
-			for name, img := range imagesToSave {
-				buf, err := getImageData(img, formatSelect.Selected)
+			for _, item := range items {
+				f, err := zw.Create(item.name)
 				if err != nil {
-					log.Printf("Error encoding image %s: %v\n", name, err)
+					log.Printf("Error creating zip entry for %s: %v\n", item.name, err)
 					continue
 				}
-				f, err := zw.Create(name)
-				if err != nil {
-					log.Printf("Error creating zip entry for %s: %v\n", name, err)
+				if err := encodeImageToWriter(f, item.make(), formatSelect.Selected); err != nil {
+					log.Printf("Error writing zip data for %s: %v\n", item.name, err)
 					continue
-				}
-				if _, err := f.Write(buf.Bytes()); err != nil {
-					log.Printf("Error writing zip data for %s: %v\n", name, err)
 				}
 			}
 		}

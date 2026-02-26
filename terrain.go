@@ -288,24 +288,27 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoints []image.Point, isValid func(image.Point) bool, seed int64) []image.Point {
 	randSrc := rand.New(rand.NewSource(seed))
 	points := initialPoints
-	activeList := append([]image.Point(nil), initialPoints...)
+	activeList := make([]int, len(initialPoints))
+	for i := range initialPoints {
+		activeList[i] = i
+	}
 
 	cellSize := minRadius / math.Sqrt(2)
 	gridWidth := int(math.Ceil(float64(width)/cellSize)) + 1
 	gridHeight := int(math.Ceil(float64(height)/cellSize)) + 1
-	grid := make([][]image.Point, gridWidth)
+	grid := make([]int32, gridWidth*gridHeight)
 	for i := range grid {
-		grid[i] = make([]image.Point, gridHeight)
+		grid[i] = -1
 	}
 
-	for _, p := range points {
+	for i, p := range points {
 		gridX, gridY := int(float64(p.X)/cellSize), int(float64(p.Y)/cellSize)
-		grid[gridX][gridY] = p
+		grid[gridY*gridWidth+gridX] = int32(i)
 	}
 
 	for len(activeList) > 0 {
 		listIndex := randSrc.Intn(len(activeList))
-		p := activeList[listIndex]
+		p := points[activeList[listIndex]]
 		found := false
 		for range k {
 			angle := randSrc.Float64() * 2 * math.Pi
@@ -326,8 +329,13 @@ func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoi
 			for m := -1; m <= 1; m++ {
 				for n := -1; n <= 1; n++ {
 					checkX, checkY := gridX+m, gridY+n
-					if checkX >= 0 && checkX < gridWidth && checkY >= 0 && checkY < gridHeight && grid[checkX][checkY] != (image.Point{}) {
-						dist := math.Sqrt(math.Pow(float64(grid[checkX][checkY].X-newPoint.X), 2) + math.Pow(float64(grid[checkX][checkY].Y-newPoint.Y), 2))
+					if checkX >= 0 && checkX < gridWidth && checkY >= 0 && checkY < gridHeight {
+						g := grid[checkY*gridWidth+checkX]
+						if g < 0 {
+							continue
+						}
+						existing := points[int(g)]
+						dist := math.Sqrt(math.Pow(float64(existing.X-newPoint.X), 2) + math.Pow(float64(existing.Y-newPoint.Y), 2))
 						if dist < minRadius {
 							valid = false
 							break
@@ -341,8 +349,9 @@ func poissonDiscSampling(width, height int, minRadius float64, k int, initialPoi
 
 			if valid {
 				points = append(points, newPoint)
-				activeList = append(activeList, newPoint)
-				grid[gridX][gridY] = newPoint
+				newIdx := len(points) - 1
+				activeList = append(activeList, newIdx)
+				grid[gridY*gridWidth+gridX] = int32(newIdx)
 				found = true
 			}
 		}

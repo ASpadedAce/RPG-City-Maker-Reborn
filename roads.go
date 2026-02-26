@@ -572,38 +572,55 @@ func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, wid
 		}
 	}
 
-	widths := make(map[*Road]float64, len(roads))
-	adj := make(map[*PointOfInterest][]*Road)
-	for _, r := range roads {
+	widths := make([]float64, len(roads))
+	startNode := make([]int, len(roads))
+	endNode := make([]int, len(roads))
+	nodeIndex := make(map[*PointOfInterest]int, len(roads)*2)
+	adj := make([][]int, 0, len(roads))
+	getNodeID := func(p *PointOfInterest) int {
+		if id, ok := nodeIndex[p]; ok {
+			return id
+		}
+		id := len(adj)
+		nodeIndex[p] = id
+		adj = append(adj, nil)
+		return id
+	}
+
+	for i, r := range roads {
 		n := float64(r.Importance) / float64(maxImportance)
 		jitter := (randSrc.Float64() - 0.5) * 0.16
 		base := minWidth + (maxWidth-minWidth)*clamp01(n+jitter)
-		widths[r] = base
-		adj[r.Start] = append(adj[r.Start], r)
-		adj[r.End] = append(adj[r.End], r)
+		widths[i] = base
+		sid := getNodeID(r.Start)
+		eid := getNodeID(r.End)
+		startNode[i] = sid
+		endNode[i] = eid
+		adj[sid] = append(adj[sid], i)
+		adj[eid] = append(adj[eid], i)
 	}
 
 	for i := 0; i < 2; i++ {
-		next := make(map[*Road]float64, len(widths))
-		for r, w := range widths {
+		next := make([]float64, len(widths))
+		for ridx, w := range widths {
 			total := w
 			count := 1.0
-			for _, n := range []*PointOfInterest{r.Start, r.End} {
-				for _, nbr := range adj[n] {
-					if nbr == r {
+			for _, nid := range []int{startNode[ridx], endNode[ridx]} {
+				for _, nbr := range adj[nid] {
+					if nbr == ridx {
 						continue
 					}
 					total += widths[nbr]
 					count += 1
 				}
 			}
-			next[r] = w*0.55 + (total/count)*0.45
+			next[ridx] = w*0.55 + (total/count)*0.45
 		}
 		widths = next
 	}
 
-	for _, r := range roads {
-		w := clamp(widths[r], minWidth, maxWidth)
+	for i, r := range roads {
+		w := clamp(widths[i], minWidth, maxWidth)
 		r.Width = max(1, int(math.Round(w)))
 	}
 }
