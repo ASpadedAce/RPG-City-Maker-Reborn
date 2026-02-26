@@ -456,13 +456,39 @@ func getComponentPixels(center image.Point, size float64, shape string, randSrc 
 
 // chooseShape selects a building shape based on the provided ratios.
 func chooseShape(randSrc *rand.Rand, ratios map[string]float64) string {
-	var shapes []string
-	var weights []float64
+	if len(ratios) == 0 {
+		return "squares"
+	}
+
+	// Deterministic iteration order so seeded runs remain reproducible.
+	baseOrder := []string{"squares", "circles", "rectangles"}
+	shapes := make([]string, 0, len(ratios))
+	seen := make(map[string]bool, len(ratios))
+	for _, shape := range baseOrder {
+		if _, ok := ratios[shape]; ok {
+			shapes = append(shapes, shape)
+			seen[shape] = true
+		}
+	}
+	// Include any extra shapes in sorted order to keep behavior stable.
+	extras := make([]string, 0, len(ratios))
+	for shape := range ratios {
+		if !seen[shape] {
+			extras = append(extras, shape)
+		}
+	}
+	sort.Strings(extras)
+	shapes = append(shapes, extras...)
+
+	weights := make([]float64, 0, len(shapes))
 	var cumulativeWeight float64
-	for shape, weight := range ratios {
-		shapes = append(shapes, shape)
+	for _, shape := range shapes {
+		weight := ratios[shape]
 		cumulativeWeight += weight
 		weights = append(weights, cumulativeWeight)
+	}
+	if cumulativeWeight <= 0 {
+		return shapes[0]
 	}
 
 	// Generate a random number between 0 and the total weight
