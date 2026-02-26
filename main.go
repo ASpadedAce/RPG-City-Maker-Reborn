@@ -429,18 +429,6 @@ func main() {
 		val, _ := treeClumpinessSlider.value.Get()
 		settings.TreeClumpiness = val
 	}))
-	numRoadsSlider := newNumericInputSlider(0, 2000, float64(settings.NumRoads), "%.0f", "Number of Roads")
-	numRoadsSlider.entry.OnChanged = func(s string) {
-		numRoadsSlider.validate(s, func(hasError bool) {
-			errorStates["numRoads"] = hasError
-			updateGenerateBtnState()
-		})
-	}
-	numRoadsSlider.value.AddListener(binding.NewDataListener(func() {
-		val, _ := numRoadsSlider.value.Get()
-		settings.NumRoads = int(val)
-	}))
-
 	minRoadWidthSlider := newNumericInputSlider(1, 150, settings.MinRoadWidth, "%.0fpx", "Min Road Width")
 	minRoadWidthSlider.entry.OnChanged = func(s string) {
 		minRoadWidthSlider.validate(s, func(hasError bool) {
@@ -499,6 +487,18 @@ func main() {
 	roadDistributionSlider.value.AddListener(binding.NewDataListener(func() {
 		val, _ := roadDistributionSlider.value.Get()
 		settings.RoadDistribution = val
+	}))
+
+	minRoadAngleSlider := newNumericInputSlider(0, 180, settings.MinRoadAngle, "%.0f°", "Minimum Road Angle")
+	minRoadAngleSlider.entry.OnChanged = func(s string) {
+		minRoadAngleSlider.validate(s, func(hasError bool) {
+			errorStates["minRoadAngle"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	minRoadAngleSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minRoadAngleSlider.value.Get()
+		settings.MinRoadAngle = val
 	}))
 
 	// Create UI elements for error display and action buttons
@@ -734,10 +734,10 @@ func main() {
 	))
 
 	roadsTab := container.NewTabItem("Roads", container.NewVBox(
-		numRoadsSlider,
 		minRoadWidthSlider,
 		maxRoadWidthSlider,
 		roadExitsSlider,
+		minRoadAngleSlider,
 		roadCurvynessSlider,
 		roadDistributionSlider,
 	))

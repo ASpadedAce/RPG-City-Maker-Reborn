@@ -107,8 +107,11 @@ func newNumericInputSlider(min, max float64, initialValue float64, format string
 
 // validate checks text entry for valid numeric input within the defined range
 func (s *numericInputSlider) validate(text string, onError func(bool)) {
+	text = strings.TrimSpace(text)
 	text = strings.TrimSuffix(text, "px")
 	text = strings.TrimSuffix(text, "%")
+	text = strings.TrimSuffix(text, "°")
+	text = strings.TrimSpace(text)
 	val, err := strconv.ParseFloat(text, 64)
 	if err != nil {
 		s.errorLabel.SetText("Not a number")

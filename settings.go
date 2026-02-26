@@ -35,12 +35,12 @@ type Settings struct {
 	TreeClumpiness float64 `json:"tree_clumpiness"`
 
 	// Road settings
-	NumRoads         int     `json:"num_roads"`
 	MinRoadWidth     float64 `json:"min_road_width"`
 	MaxRoadWidth     float64 `json:"max_road_width"`
 	RoadExits        int     `json:"road_exits"`
 	RoadCurvyness    float64 `json:"road_curvyness"`
 	RoadDistribution float64 `json:"road_distribution"`
+	MinRoadAngle     float64 `json:"min_road_angle"`
 
 	// Building settings
 	NumBuildings         int     `json:"num_buildings"`
@@ -130,12 +130,12 @@ func LoadSettings() (*Settings, error) {
 				RiverCurvyness:        50,
 				RiverWidthVariability: 50,
 				RiverEdgeRoughness:    50,
-				NumRoads:              100,
 				MinRoadWidth:          2,
 				MaxRoadWidth:          8,
 				RoadExits:             5,
 				RoadCurvyness:         50,
 				RoadDistribution:      50,
+				MinRoadAngle:          18,
 				NumBuildings:          200,
 				MinBuildingSize:       10,
 				MaxBuildingSize:       30,
@@ -157,12 +157,17 @@ func LoadSettings() (*Settings, error) {
 	}
 	defer file.Close()
 
-	// Decode the JSON data into a Settings struct
-	var settings Settings
+	// Decode through a wrapper so we can tell whether newer fields were present.
+	type settingsDisk struct {
+		Settings
+		MinRoadAngle *float64 `json:"min_road_angle"`
+	}
+	var disk settingsDisk
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&settings); err != nil {
+	if err := decoder.Decode(&disk); err != nil {
 		return nil, err
 	}
+	settings := disk.Settings
 
 	if settings.LakeShape == "" {
 		settings.LakeShape = "circle"
@@ -186,6 +191,9 @@ func LoadSettings() (*Settings, error) {
 	}
 	if settings.BuildingComplexityRatio == 0 {
 		settings.BuildingComplexityRatio = 50
+	}
+	if disk.MinRoadAngle == nil {
+		settings.MinRoadAngle = 18
 	}
 
 	// Ensure LastExportPath is set to a default value if it's empty
