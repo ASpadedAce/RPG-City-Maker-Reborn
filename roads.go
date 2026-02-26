@@ -31,6 +31,14 @@ type Road struct {
 	Importance int
 }
 
+var lastExitRoadPixels []image.Point
+
+func getExitRoadPixels() []image.Point {
+	out := make([]image.Point, len(lastExitRoadPixels))
+	copy(out, lastExitRoadPixels)
+	return out
+}
+
 // GenerateRoads creates roads on the map.
 func GenerateRoads(width, height int, settings *Settings, _ image.Image, allWaterPixels []image.Point, seed int64) ([]image.Point, []image.Point, *image.RGBA) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -57,11 +65,17 @@ func GenerateRoads(width, height int, settings *Settings, _ image.Image, allWate
 
 	allRoadPixels := make([]image.Point, 0, len(roads)*64)
 	allBridgePixels := make([]image.Point, 0, len(roads)*16)
+	exitRoadPixels := make([]image.Point, 0, len(roads)*16)
 	for _, road := range roads {
 		roadPixels, bridgePixels := drawRoad(img, road.Points, roadColor, bridgeColor, road.Width)
 		allRoadPixels = append(allRoadPixels, roadPixels...)
 		allBridgePixels = append(allBridgePixels, bridgePixels...)
+		if road.Start.IsExit || road.End.IsExit {
+			exitRoadPixels = append(exitRoadPixels, roadPixels...)
+			exitRoadPixels = append(exitRoadPixels, bridgePixels...)
+		}
 	}
+	lastExitRoadPixels = exitRoadPixels
 
 	return allRoadPixels, allBridgePixels, img
 }

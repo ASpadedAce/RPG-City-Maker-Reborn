@@ -28,14 +28,27 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 	for _, p := range roadPixels {
 		isRoad[p] = true
 	}
+	isExitRoad := make(map[image.Point]bool)
+	for _, p := range getExitRoadPixels() {
+		isExitRoad[p] = true
+	}
 
 	isBuilding := make(map[image.Point]bool)
 	var buildings [][]image.Point
 	var allBuildingPixels []image.Point
 	var anchorPoints []image.Point
+	var normalRoadAnchors []image.Point
+	var exitRoadAnchors []image.Point
 
 	if len(roadPixels) > 0 {
 		anchorPoints = roadPixels
+		for _, p := range anchorPoints {
+			if isExitRoad[p] {
+				exitRoadAnchors = append(exitRoadAnchors, p)
+			} else {
+				normalRoadAnchors = append(normalRoadAnchors, p)
+			}
+		}
 	} else {
 		// If no roads, use all land pixels as anchors
 		for y := 0; y < height; y++ {
@@ -81,7 +94,15 @@ func GenerateBuildings(img *image.RGBA, width, height int, settings *Settings, r
 		// Select an anchor point for the new building
 		var anchor image.Point
 		if randSrc.Float64() > settings.BuildingDistribution/100.0 {
-			anchor = anchorPoints[randSrc.Intn(len(anchorPoints))]
+			// Buildings should only rarely use exit-road anchors.
+			useExitAnchor := len(exitRoadAnchors) > 0 && randSrc.Float64() < 0.02
+			if useExitAnchor {
+				anchor = exitRoadAnchors[randSrc.Intn(len(exitRoadAnchors))]
+			} else if len(normalRoadAnchors) > 0 {
+				anchor = normalRoadAnchors[randSrc.Intn(len(normalRoadAnchors))]
+			} else {
+				anchor = anchorPoints[randSrc.Intn(len(anchorPoints))]
+			}
 		} else {
 			if len(landPoints) == 0 {
 				continue // No land to place buildings on
