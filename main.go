@@ -482,7 +482,7 @@ func main() {
 		settings.RiverEdgeRoughness = val
 	}))
 
-	minTreeSizeSlider := newNumericInputSlider(1, 150, settings.MinTreeSize, "%.0fpx", "Min Tree Size")
+	minTreeSizeSlider := newNumericInputSliderWithStep(minTreeSizePercent, maxTreeSizePercent, settings.MinTreeSize, treeSizePercentStep, "%.1f%%", "Min Tree Size")
 	minTreeSizeSlider.entry.OnChanged = func(s string) {
 		minTreeSizeSlider.validate(s, func(hasError bool) {
 			errorStates["minTreeSize"] = hasError
@@ -494,7 +494,7 @@ func main() {
 		settings.MinTreeSize = val
 	}))
 
-	maxTreeSizeSlider := newNumericInputSlider(1, 150, settings.MaxTreeSize, "%.0fpx", "Max Tree Size")
+	maxTreeSizeSlider := newNumericInputSliderWithStep(minTreeSizePercent, maxTreeSizePercent, settings.MaxTreeSize, treeSizePercentStep, "%.1f%%", "Max Tree Size")
 	maxTreeSizeSlider.entry.OnChanged = func(s string) {
 		maxTreeSizeSlider.validate(s, func(hasError bool) {
 			errorStates["maxTreeSize"] = hasError

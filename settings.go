@@ -120,8 +120,8 @@ func LoadSettings() (*Settings, error) {
 				LakeSizeUpper:         5,
 				LakeEdgeRoughness:     50,
 				LakeShape:             "circle",
-				MinTreeSize:           5,
-				MaxTreeSize:           20,
+				MinTreeSize:           1.6,
+				MaxTreeSize:           6.6,
 				TreeCoverage:          20,
 				TreeClumpiness:        50,
 				Seed:                  time.Now().UnixNano(),
@@ -198,6 +198,18 @@ func LoadSettings() (*Settings, error) {
 	if _, ok := rawKeys["min_road_angle"]; !ok {
 		settings.MinRoadAngle = 18
 	}
+
+	// Tree sizes are percentages of average image dimension.
+	// Migrate older pixel-based values when they exceed the valid percentage range.
+	if settings.MinTreeSize > maxTreeSizePercent || settings.MaxTreeSize > maxTreeSizePercent {
+		avgDim := averageImageDimension(settings.Width, settings.Height)
+		if avgDim < 1 {
+			avgDim = 1
+		}
+		settings.MinTreeSize = (settings.MinTreeSize / avgDim) * 100.0
+		settings.MaxTreeSize = (settings.MaxTreeSize / avgDim) * 100.0
+	}
+	settings.MinTreeSize, settings.MaxTreeSize = normalizeTreeSizePercentRange(settings.MinTreeSize, settings.MaxTreeSize)
 
 	// Road widths are percentages of average image dimension.
 	// Migrate older pixel-based values when they exceed the valid percentage range.

@@ -18,7 +18,53 @@ const (
 	alpha = 2.
 	beta  = 2.
 	n     = 3
+
+	minTreeSizePercent  = 0.2
+	maxTreeSizePercent  = 15.0
+	treeSizePercentStep = 0.2
 )
+
+func clampTreeSizePercent(v float64) float64 {
+	if v < minTreeSizePercent {
+		return minTreeSizePercent
+	}
+	if v > maxTreeSizePercent {
+		return maxTreeSizePercent
+	}
+	return v
+}
+
+func snapTreeSizePercent(v float64) float64 {
+	v = clampTreeSizePercent(v)
+	steps := math.Round((v - minTreeSizePercent) / treeSizePercentStep)
+	return clampTreeSizePercent(minTreeSizePercent + steps*treeSizePercentStep)
+}
+
+func normalizeTreeSizePercentRange(minPercent, maxPercent float64) (float64, float64) {
+	minPercent = snapTreeSizePercent(minPercent)
+	maxPercent = snapTreeSizePercent(maxPercent)
+	if minPercent > maxPercent {
+		minPercent, maxPercent = maxPercent, minPercent
+	}
+	return minPercent, maxPercent
+}
+
+func getTreeSizeRangePixels(minPercent, maxPercent float64, width, height int) (float64, float64) {
+	minPercent, maxPercent = normalizeTreeSizePercentRange(minPercent, maxPercent)
+	avgDim := averageImageDimension(width, height)
+	if avgDim < 1 {
+		avgDim = 1
+	}
+	minPx := (minPercent / 100.0) * avgDim
+	maxPx := (maxPercent / 100.0) * avgDim
+	if minPx < 1 {
+		minPx = 1
+	}
+	if maxPx < 1 {
+		maxPx = 1
+	}
+	return minPx, maxPx
+}
 
 // GenerateHeightmap creates terrain elevation using Perlin noise
 func GenerateHeightmap(width, height, octaves int, scale float64, seed int64) image.Image {
@@ -161,21 +207,18 @@ func FlattenRoadAreas(heightmap image.Image, roadMask *PixelMask) image.Image {
 func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask, minTreeSize, maxTreeSize, treeCoverage, treeClumpiness float64, seed int64) *PixelMask {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
+	minTreeSizePx, maxTreeSizePx := getTreeSizeRangePixels(minTreeSize, maxTreeSize, width, height)
 
-	avgTreeSize := (minTreeSize + maxTreeSize) / 2
-	if avgTreeSize <= 0 {
-		return nil
+	totalPixels := width * height
+	if totalPixels <= 0 || treeCoverage <= 0 {
+		return NewPixelMask(width, height)
 	}
-	avgRadius := avgTreeSize / 2
-	avgTreeArea := math.Pi * avgRadius * avgRadius
-	if avgTreeArea == 0 {
-		return nil
+	targetTreePixels := int((float64(totalPixels) * treeCoverage) / 100.0)
+	if treeCoverage >= 100 {
+		targetTreePixels = totalPixels
 	}
-	totalArea := float64(width * height)
-	targetTreePixels := totalArea * (treeCoverage / 100.0)
-	numTreesToPlace := int(targetTreePixels / avgTreeArea)
-	if numTreesToPlace == 0 {
-		return nil
+	if targetTreePixels < 1 {
+		targetTreePixels = 1
 	}
 
 	noise := opensimplex.New(seed)
@@ -201,8 +244,7 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 	}
 
 	randSrc := rand.New(rand.NewSource(seed))
-
-	numClumpTrees := min(int(treeClumpiness), numTreesToPlace)
+	numClumpTrees := max(1, int(treeClumpiness))
 
 	initialPoints := make([]image.Point, 0, numClumpTrees)
 	for range numClumpTrees {
@@ -214,71 +256,67 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 			}
 		}
 	}
+	if len(initialPoints) == 0 {
+		for i := 0; i < 256; i++ {
+			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
+			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
+				initialPoints = append(initialPoints, p)
+				break
+			}
+		}
+		if len(initialPoints) == 0 {
+			return NewPixelMask(width, height)
+		}
+	}
 
-	minRadius := minTreeSize
+	minRadius := minTreeSizePx
 	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
 		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p)
 	}, seed)
-
-	numGoroutines := runtime.NumCPU()
-	if len(allPoints) < numGoroutines {
-		numGoroutines = len(allPoints)
+	treeMask := NewPixelMask(width, height)
+	if len(allPoints) == 0 {
+		return treeMask
 	}
-	if numGoroutines == 0 {
-		return nil
-	}
-
-	var wg sync.WaitGroup
-	results := make(chan []image.Point, numGoroutines)
-	pointsPerGoroutine := (len(allPoints) + numGoroutines - 1) / numGoroutines
-
-	for i := 0; i < numGoroutines; i++ {
-		start := i * pointsPerGoroutine
-		if start >= len(allPoints) {
-			break
+	treePixelsPlaced := 0
+	sizeRand := rand.New(rand.NewSource(seed + 17))
+	done := false
+	for _, p := range allPoints {
+		size := minTreeSizePx + sizeRand.Float64()*(maxTreeSizePx-minTreeSizePx)
+		if size <= 0 {
+			continue
 		}
-		end := start + pointsPerGoroutine
-		if end > len(allPoints) {
-			end = len(allPoints)
-		}
-
-		wg.Add(1)
-		go func(points []image.Point, seed int64) {
-			defer wg.Done()
-			localRand := rand.New(rand.NewSource(seed))
-			localTreePixels := make([]image.Point, 0)
-			for _, p := range points {
-				size := minTreeSize + localRand.Float64()*(maxTreeSize-minTreeSize)
-				if size <= 0 {
+		r := size / 2
+		r2 := r * r
+		for y := p.Y - int(r); y <= p.Y+int(r); y++ {
+			for x := p.X - int(r); x <= p.X+int(r); x++ {
+				pt := image.Point{X: x, Y: y}
+				if !pt.In(img.Bounds()) || waterMask.GetPoint(pt) || roadMask.GetPoint(pt) || buildingMask.GetPoint(pt) {
 					continue
 				}
-				r := size / 2
-				for y := p.Y - int(r); y <= p.Y+int(r); y++ {
-					for x := p.X - int(r); x <= p.X+int(r); x++ {
-						pt := image.Point{X: x, Y: y}
-						if !pt.In(img.Bounds()) || waterMask.GetPoint(pt) || roadMask.GetPoint(pt) || buildingMask.GetPoint(pt) {
-							continue
-						}
-
-						if (math.Pow(float64(x-p.X), 2) + math.Pow(float64(y-p.Y), 2)) <= r*r {
-							localTreePixels = append(localTreePixels, pt)
-						}
+				dx := float64(x - p.X)
+				dy := float64(y - p.Y)
+				if dx*dx+dy*dy > r2 {
+					continue
+				}
+				idx := y*width + x
+				if treeMask.Data[idx] == 0 {
+					treeMask.Data[idx] = 1
+					treePixelsPlaced++
+					if treePixelsPlaced >= targetTreePixels {
+						done = true
+						break
 					}
 				}
 			}
-			results <- localTreePixels
-		}(allPoints[start:end], seed+int64(i))
-	}
-
-	wg.Wait()
-	close(results)
-
-	treeMask := NewPixelMask(width, height)
-	for res := range results {
-		for _, p := range res {
-			treeMask.SetPoint(p)
+			if done {
+				break
+			}
+		}
+		if done {
+			break
 		}
 	}
+
 	for y := 0; y < treeMask.Height; y++ {
 		row := y * treeMask.Width
 		for x := 0; x < treeMask.Width; x++ {
