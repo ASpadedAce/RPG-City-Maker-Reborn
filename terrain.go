@@ -128,11 +128,9 @@ func FlattenRoadAreas(heightmap image.Image, roadMask *PixelMask) image.Image {
 
 	blurRadius := float64(width) * 0.01
 	blurredRoadMask := imaging.Blur(roadGrayMask, blurRadius)
-
 	blurredHeightmap := imaging.Blur(heightmap, blurRadius)
 
 	composite := image.NewRGBA(bounds)
-
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			maskAlpha, _, _, _ := blurredRoadMask.At(x, y).RGBA()
@@ -144,7 +142,6 @@ func FlattenRoadAreas(heightmap image.Image, roadMask *PixelMask) image.Image {
 				r2, g2, b2, a2 := blurredColor.RGBA()
 
 				alpha := float64(maskAlpha) / 65535.0
-
 				r := uint16(float64(r1)*(1-alpha) + float64(r2)*alpha)
 				g := uint16(float64(g1)*(1-alpha) + float64(g2)*alpha)
 				b := uint16(float64(b1)*(1-alpha) + float64(b2)*alpha)

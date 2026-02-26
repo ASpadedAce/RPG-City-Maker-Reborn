@@ -533,6 +533,127 @@ func isPixelInSlice(pixel image.Point, pixelSlice []image.Point) bool {
 	return false
 }
 
+var (
+	u8BufferPool = sync.Pool{
+		New: func() any { return make([]uint8, 0) },
+	}
+	f32BufferPool = sync.Pool{
+		New: func() any { return make([]float32, 0) },
+	}
+)
+
+func getU8Buffer(n int) []uint8 {
+	buf := u8BufferPool.Get().([]uint8)
+	if cap(buf) < n {
+		return make([]uint8, n)
+	}
+	return buf[:n]
+}
+
+func putU8Buffer(buf []uint8) {
+	if buf == nil {
+		return
+	}
+	u8BufferPool.Put(buf[:0])
+}
+
+func getF32Buffer(n int) []float32 {
+	buf := f32BufferPool.Get().([]float32)
+	if cap(buf) < n {
+		return make([]float32, n)
+	}
+	return buf[:n]
+}
+
+func putF32Buffer(buf []float32) {
+	if buf == nil {
+		return
+	}
+	f32BufferPool.Put(buf[:0])
+}
+
+func chamferDistanceFieldInto(baseMask []uint8, w, h int, dist []float32) []float32 {
+	const maxF = 1e6
+	total := w * h
+	if len(dist) < total {
+		dist = make([]float32, total)
+	} else {
+		dist = dist[:total]
+	}
+
+	for i := 0; i < total; i++ {
+		if baseMask[i] == 1 {
+			dist[i] = 0
+		} else {
+			dist[i] = maxF
+		}
+	}
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			if dist[i] == 0 {
+				continue
+			}
+			if x > 0 {
+				v := dist[i-1] + 1.0
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if y > 0 {
+				v := dist[i-w] + 1.0
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if x > 0 && y > 0 {
+				v := dist[i-w-1] + 1.41421356
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if x < w-1 && y > 0 {
+				v := dist[i-w+1] + 1.41421356
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+		}
+	}
+
+	for y := h - 1; y >= 0; y-- {
+		for x := w - 1; x >= 0; x-- {
+			i := y*w + x
+			if x < w-1 {
+				v := dist[i+1] + 1.0
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if y < h-1 {
+				v := dist[i+w] + 1.0
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if x < w-1 && y < h-1 {
+				v := dist[i+w+1] + 1.41421356
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+			if x > 0 && y < h-1 {
+				v := dist[i+w-1] + 1.41421356
+				if v < dist[i] {
+					dist[i] = v
+				}
+			}
+		}
+	}
+	return dist
+}
+
 // FlattenBuildingAreas flattens the terrain under buildings and blends the surrounding area.
 func FlattenBuildingAreas(heightMap *image.RGBA, buildings [][]image.Point, width, height int) *image.RGBA {
 	if len(buildings) == 0 {
@@ -541,68 +662,103 @@ func FlattenBuildingAreas(heightMap *image.RGBA, buildings [][]image.Point, widt
 
 	newHeightMap := image.NewRGBA(heightMap.Bounds())
 	copy(newHeightMap.Pix, heightMap.Pix)
+	const bufferRadius = 5.0
 
-	// Process each building in parallel.
-	var wg sync.WaitGroup
 	for _, building := range buildings {
-		wg.Add(1)
-		go func(building []image.Point) {
-			defer wg.Done()
+		if len(building) == 0 {
+			continue
+		}
 
-			// Calculate the average height of the building area.
-			var totalGray uint32
-			for _, p := range building {
-				gray, _, _, _ := newHeightMap.At(p.X, p.Y).RGBA()
-				totalGray += gray
+		minX, minY := width-1, height-1
+		maxX, maxY := 0, 0
+		var totalGray uint32
+		for _, p := range building {
+			if p.X < 0 || p.Y < 0 || p.X >= width || p.Y >= height {
+				continue
 			}
-			avgGray := uint8(totalGray / uint32(len(building)) >> 8)
-			avgColor := color.RGBA{R: avgGray, G: avgGray, B: avgGray, A: 255}
-
-			// Flatten the building area.
-			for _, p := range building {
-				newHeightMap.Set(p.X, p.Y, avgColor)
+			if p.X < minX {
+				minX = p.X
 			}
+			if p.Y < minY {
+				minY = p.Y
+			}
+			if p.X > maxX {
+				maxX = p.X
+			}
+			if p.Y > maxY {
+				maxY = p.Y
+			}
+			srcIdx := p.Y*heightMap.Stride + p.X*4
+			totalGray += uint32(heightMap.Pix[srcIdx])
+		}
+		if minX > maxX || minY > maxY {
+			continue
+		}
+		avgGray := uint8(totalGray / uint32(len(building)))
 
-			buffer := make([]image.Point, 0)
-			for _, p := range building {
-				for y := p.Y - 5; y <= p.Y+5; y++ {
-					for x := p.X - 5; x <= p.X+5; x++ {
-						if x >= 0 && x < width && y >= 0 && y < height {
-							candidate := image.Point{X: x, Y: y}
-							if !isPixelInSlice(candidate, building) && !isPixelInSlice(candidate, buffer) {
-								buffer = append(buffer, candidate)
-							}
-						}
-					}
+		pad := int(bufferRadius)
+		bx0 := max(0, minX-pad)
+		by0 := max(0, minY-pad)
+		bx1 := min(width-1, maxX+pad)
+		by1 := min(height-1, maxY+pad)
+		bw := bx1 - bx0 + 1
+		bh := by1 - by0 + 1
+		if bw <= 0 || bh <= 0 {
+			continue
+		}
+
+		maskSize := bw * bh
+		baseMask := getU8Buffer(maskSize)
+		for i := range baseMask {
+			baseMask[i] = 0
+		}
+		for _, p := range building {
+			if p.X < bx0 || p.X > bx1 || p.Y < by0 || p.Y > by1 {
+				continue
+			}
+			localIdx := (p.Y-by0)*bw + (p.X - bx0)
+			baseMask[localIdx] = 1
+		}
+
+		distBuf := getF32Buffer(maskSize)
+		dist := chamferDistanceFieldInto(baseMask, bw, bh, distBuf)
+
+		for y := by0; y <= by1; y++ {
+			localRow := (y - by0) * bw
+			rowOffset := y * newHeightMap.Stride
+			srcRowOffset := y * heightMap.Stride
+			for x := bx0; x <= bx1; x++ {
+				localIdx := localRow + (x - bx0)
+				idx := rowOffset + x*4
+				if baseMask[localIdx] == 1 {
+					newHeightMap.Pix[idx] = avgGray
+					newHeightMap.Pix[idx+1] = avgGray
+					newHeightMap.Pix[idx+2] = avgGray
+					newHeightMap.Pix[idx+3] = 255
+					continue
 				}
-			}
 
-			// Blend the buffer.
-			for _, p := range buffer {
-				originalColor := heightMap.At(p.X, p.Y)
-				_, g, _, _ := originalColor.RGBA()
-
-				minDist := math.MaxFloat64
-				for _, bp := range building {
-					dist := math.Sqrt(math.Pow(float64(p.X-bp.X), 2) + math.Pow(float64(p.Y-bp.Y), 2))
-					if dist < minDist {
-						minDist = dist
-					}
+				d := float64(dist[localIdx])
+				if d > bufferRadius {
+					continue
 				}
-
-				// Blend based on distance.
-				blendFactor := minDist / 5.0
-				if blendFactor > 1.0 {
-					blendFactor = 1.0
+				blendFactor := d / bufferRadius
+				if blendFactor > 1 {
+					blendFactor = 1
 				}
-
-				newGray := uint8(float64(avgGray)*(1.0-blendFactor) + float64(g>>8)*blendFactor)
-				newColor := color.RGBA{R: newGray, G: newGray, B: newGray, A: 255}
-				newHeightMap.Set(p.X, p.Y, newColor)
+				srcIdx := srcRowOffset + x*4
+				origGray := float64(heightMap.Pix[srcIdx])
+				newGray := uint8(float64(avgGray)*(1.0-blendFactor) + origGray*blendFactor)
+				newHeightMap.Pix[idx] = newGray
+				newHeightMap.Pix[idx+1] = newGray
+				newHeightMap.Pix[idx+2] = newGray
+				newHeightMap.Pix[idx+3] = 255
 			}
-		}(building)
+		}
+
+		putF32Buffer(distBuf)
+		putU8Buffer(baseMask)
 	}
-	wg.Wait()
 
 	return newHeightMap
 }
