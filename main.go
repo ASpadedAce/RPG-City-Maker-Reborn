@@ -624,6 +624,10 @@ func main() {
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
 		go func() {
+			var timedOutSteps []string
+			addTimeout := func(step string) {
+				timedOutSteps = append(timedOutSteps, step)
+			}
 			// Disable button and show progress bar during generation
 			fyne.Do(func() {
 				generateBtn.Disable()
@@ -670,6 +674,7 @@ func main() {
 				lakes = out.lks
 			} else {
 				log.Println("GenerateLakes timed out after 1 minute; continuing.")
+				addTimeout("Lakes")
 				lakes = nil
 			}
 
@@ -695,6 +700,7 @@ func main() {
 				finalImage = cloneToRGBA(out.img, settings.Width, settings.Height)
 			} else {
 				log.Println("GenerateRivers timed out after 1 minute; continuing.")
+				addTimeout("Rivers")
 				riverMask = NewPixelMask(settings.Width, settings.Height)
 			}
 			waterMask = BuildMaskFromLakes(settings.Width, settings.Height, lakes)
@@ -728,6 +734,7 @@ func main() {
 				finalImage = roadBase
 			} else {
 				log.Println("GenerateRoads timed out after 1 minute; continuing.")
+				addTimeout("Roads")
 				roadMask = NewPixelMask(settings.Width, settings.Height)
 				bridgeMask = NewPixelMask(settings.Width, settings.Height)
 				exitRoadMask = NewPixelMask(settings.Width, settings.Height)
@@ -755,6 +762,7 @@ func main() {
 				finalImage = buildingBase
 			} else {
 				log.Println("GenerateBuildings timed out after 1 minute; continuing.")
+				addTimeout("Buildings")
 				buildings = nil
 				buildingMask = NewPixelMask(settings.Width, settings.Height)
 			}
@@ -803,6 +811,7 @@ func main() {
 				finalImage = treeBase
 			} else {
 				log.Println("GenerateTrees timed out after 1 minute; continuing.")
+				addTimeout("Trees")
 				treeMask = NewPixelMask(settings.Width, settings.Height)
 			}
 
@@ -823,6 +832,12 @@ func main() {
 				bumpmapImg.Refresh()
 				canvasImg.Image = finalImage
 				canvasImg.Refresh()
+				if len(timedOutSteps) > 0 {
+					errorLabel.SetText("Generation timed out after 1 minute for: " + strings.Join(timedOutSteps, ", ") + ". Partial results were used.")
+					errorLabel.Show()
+				} else {
+					errorLabel.Hide()
+				}
 			})
 		}()
 	})

@@ -261,7 +261,6 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 						}
 
 						if (math.Pow(float64(x-p.X), 2) + math.Pow(float64(y-p.Y), 2)) <= r*r {
-							img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
 							localTreePixels = append(localTreePixels, pt)
 						}
 					}
@@ -278,6 +277,14 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 	for res := range results {
 		for _, p := range res {
 			treeMask.SetPoint(p)
+		}
+	}
+	for y := 0; y < treeMask.Height; y++ {
+		row := y * treeMask.Width
+		for x := 0; x < treeMask.Width; x++ {
+			if treeMask.Data[row+x] != 0 {
+				img.Set(x, y, color.RGBA{R: 0, G: 100, B: 0, A: 255})
+			}
 		}
 	}
 
