@@ -95,7 +95,50 @@ func GenerateRoads(
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 	bridgeColor := color.RGBA{R: 60, G: 42, B: 33, A: 255}
 
-	roadTarget := estimateRoadTarget(settings, randSrc)
+	// Edge-case mode: no buildings.
+	if settings.NumBuildings == 0 {
+		internalRoads := int(math.Round(clamp(settings.RoadDistribution, 0, 100)))
+		exitRoads := max(0, settings.RoadExits)
+		if internalRoads == 0 && exitRoads == 0 {
+			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		}
+
+		var roads []*Road
+		if internalRoads > 0 {
+			roadTarget := internalRoads
+			pois := generatePOIs(width, height, settings, waterMask, randSrc, roadTarget)
+			if len(pois) >= 2 {
+				roads = connectPOIs(pois, width, height, settings, randSrc, waterMask, roadTarget)
+				// Use existing exit-road logic when internal roads are present.
+				roads = appendExitRoads(roads, pois, width, height, settings, randSrc, waterMask)
+			}
+		} else if settings.RoadDistribution <= 0 && exitRoads > 0 {
+			// Only in 0% distribution mode: exit roads are edge-to-edge.
+			roads = generateEdgeToEdgeExitRoads(exitRoads, width, height, settings, randSrc, waterMask)
+		}
+
+		if len(roads) == 0 {
+			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		}
+		roads = reduceRepeatedBridges(roads, waterMask, width, height, randSrc)
+		if len(roads) == 0 {
+			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		}
+		assignRoadWidths(roads, settings, randSrc, width, height)
+
+		roadMask := NewPixelMask(width, height)
+		bridgeMask := NewPixelMask(width, height)
+		exitRoadMask := NewPixelMask(width, height)
+		for _, road := range roads {
+			drawRoadToMasks(img, road.Points, roadColor, bridgeColor, road.Width, roadMask, bridgeMask)
+			if road.Start.IsExit || road.End.IsExit {
+				drawRoadToMasks(img, road.Points, roadColor, bridgeColor, road.Width, exitRoadMask, exitRoadMask)
+			}
+		}
+		return roadMask, bridgeMask, exitRoadMask, roadMask.ToPoints()
+	}
+
+	roadTarget := estimateRoadTarget(settings)
 	pois := generatePOIs(width, height, settings, waterMask, randSrc, roadTarget)
 	if len(pois) < 2 {
 		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
@@ -103,6 +146,10 @@ func GenerateRoads(
 
 	roads := connectPOIs(pois, width, height, settings, randSrc, waterMask, roadTarget)
 	roads = appendExitRoads(roads, pois, width, height, settings, randSrc, waterMask)
+	if len(roads) == 0 {
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+	}
+	roads = reduceRepeatedBridges(roads, waterMask, width, height, randSrc)
 	if len(roads) == 0 {
 		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
 	}
@@ -122,8 +169,52 @@ func GenerateRoads(
 	return roadMask, bridgeMask, exitRoadMask, roadAnchors
 }
 
+func generateEdgeToEdgeExitRoads(exitRoads, width, height int, settings *Settings, randSrc *rand.Rand, waterMask *PixelMask) []*Road {
+	if exitRoads <= 0 {
+		return nil
+	}
+	avgDim := float64(width+height) / 2.0
+	roads := make([]*Road, 0, exitRoads)
+	for i := 0; i < exitRoads; i++ {
+		start, end := sampleDifferentEdgePair(width, height, randSrc)
+		start.IsExit = true
+		end.IsExit = true
+		path := calculateRoadPath(start, end, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMask)
+		roads = append(roads, &Road{
+			Start:      start,
+			End:        end,
+			Points:     path,
+			Importance: 1,
+		})
+	}
+	return roads
+}
+
+func sampleDifferentEdgePair(width, height int, randSrc *rand.Rand) (*PointOfInterest, *PointOfInterest) {
+	sideA := randSrc.Intn(4)
+	sideB := randSrc.Intn(3)
+	if sideB >= sideA {
+		sideB++
+	}
+	return sampleEdgePOIBySide(width, height, sideA, randSrc), sampleEdgePOIBySide(width, height, sideB, randSrc)
+}
+
+func sampleEdgePOIBySide(width, height, side int, randSrc *rand.Rand) *PointOfInterest {
+	switch side {
+	case 0:
+		return &PointOfInterest{X: randSrc.Intn(width), Y: 0}
+	case 1:
+		return &PointOfInterest{X: randSrc.Intn(width), Y: height - 1}
+	case 2:
+		return &PointOfInterest{X: 0, Y: randSrc.Intn(height)}
+	default:
+		return &PointOfInterest{X: width - 1, Y: randSrc.Intn(height)}
+	}
+}
+
 func generatePOIs(width, height int, settings *Settings, waterMask *PixelMask, randSrc *rand.Rand, roadTarget int) []*PointOfInterest {
 	distribution := clamp01(settings.RoadDistribution / 100.0)
+	targetCoverage := 0.10 + 0.90*distribution
 	minBuildingSizePx, maxBuildingSizePx := getBuildingSizeRangePixels(settings, width, height)
 	avgBuildingSize := (minBuildingSizePx + maxBuildingSizePx) / 2.0
 	if avgBuildingSize < 1 {
@@ -142,13 +233,13 @@ func generatePOIs(width, height int, settings *Settings, waterMask *PixelMask, r
 
 	centerX := width / 2
 	centerY := height / 2
-	maxRadius := math.Min(float64(width), float64(height)) * 0.48
-	minRadius := math.Min(float64(width), float64(height)) * 0.10
-	radius := minRadius + (maxRadius-minRadius)*distribution
+	effectiveRadius := math.Sqrt(targetCoverage) * (math.Min(float64(width), float64(height)) * 0.5)
+	warpPhaseA := randSrc.Float64() * 2 * math.Pi
+	warpPhaseB := randSrc.Float64() * 2 * math.Pi
 
 	pois := make([]*PointOfInterest, 0, coreNodes)
 	for len(pois) < coreNodes {
-		x, y, ok := sampleCorePOI(centerX, centerY, radius, width, height, randSrc)
+		x, y, ok := sampleCorePOI(width, height, distribution, targetCoverage, warpPhaseA, warpPhaseB, randSrc)
 		if !ok {
 			break
 		}
@@ -166,7 +257,7 @@ func generatePOIs(width, height int, settings *Settings, waterMask *PixelMask, r
 
 	for _, poi := range pois {
 		centerDist := math.Hypot(float64(poi.X-centerX), float64(poi.Y-centerY))
-		centerFactor := 1.0 - clamp01(centerDist/(radius+1))
+		centerFactor := 1.0 - clamp01(centerDist/(effectiveRadius+1))
 		sizeFactor := clamp01((avgBuildingSize - 4.0) / 40.0)
 		poi.ArterialWeight = clamp01(0.60*centerFactor + 0.40*sizeFactor)
 	}
@@ -193,13 +284,41 @@ func estimateCoreNodeCount(width, height int, distribution, avgBuildingSize floa
 	return nodes
 }
 
-func sampleCorePOI(centerX, centerY int, radius float64, width, height int, randSrc *rand.Rand) (int, int, bool) {
-	for i := 0; i < 60; i++ {
-		t := randSrc.Float64() * 2 * math.Pi
-		r := radius * math.Sqrt(randSrc.Float64())
-		x := centerX + int(math.Round(r*math.Cos(t)))
-		y := centerY + int(math.Round(r*math.Sin(t)))
-		if x >= 0 && x < width && y >= 0 && y < height {
+func sampleCorePOI(width, height int, distribution, targetCoverage, warpPhaseA, warpPhaseB float64, randSrc *rand.Rand) (int, int, bool) {
+	if width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	// At 100% distribution, allow POIs over the entire canvas.
+	if distribution >= 0.999 {
+		return randSrc.Intn(width), randSrc.Intn(height), true
+	}
+
+	coverageRadius := math.Sqrt(clamp(targetCoverage, 0.01, 1.0))
+	// Morph from round to squarer footprint as distribution rises.
+	superellipsePower := 2.0 + 10.0*distribution
+	warpAmp := (1.0 - distribution) * 0.18
+
+	cx := float64(width-1) * 0.5
+	cy := float64(height-1) * 0.5
+	invHalfW := 1.0 / math.Max(float64(width-1)*0.5, 1.0)
+	invHalfH := 1.0 / math.Max(float64(height-1)*0.5, 1.0)
+
+	for i := 0; i < 120; i++ {
+		x := randSrc.Intn(width)
+		y := randSrc.Intn(height)
+		nx := (float64(x) - cx) * invHalfW
+		ny := (float64(y) - cy) * invHalfH
+
+		ax := math.Abs(nx)
+		ay := math.Abs(ny)
+		metric := math.Pow(ax, superellipsePower) + math.Pow(ay, superellipsePower)
+		theta := math.Atan2(ny, nx)
+		warp := 1.0 + warpAmp*(0.55*math.Sin(3.0*theta+warpPhaseA)+0.45*math.Sin(5.0*theta+warpPhaseB))
+		if warp < 0.7 {
+			warp = 0.7
+		}
+		threshold := math.Pow(coverageRadius*warp, superellipsePower)
+		if metric <= threshold {
 			return x, y, true
 		}
 	}
@@ -497,16 +616,18 @@ func chooseExitAnchor(pois []*PointOfInterest, usedExits []image.Point, randSrc 
 	return best
 }
 
-func estimateRoadTarget(settings *Settings, randSrc *rand.Rand) int {
-	// Two random numbers in [1,10], averaged -> triangular distribution centered at 10.5.
-	divisor := float64((randSrc.Intn(10)+1)+(randSrc.Intn(10)+1)) / 2.0
-	roads := int(math.Round(float64(max(settings.NumBuildings, 1)) / divisor))
-	if roads < 4 {
-		roads = 4
+func estimateRoadTarget(settings *Settings) int {
+	if settings.NumBuildings <= 0 {
+		return 0
 	}
-	// Keep exits connectable and cap by graph size.
-	if roads < settings.RoadExits {
-		roads = settings.RoadExits
+	// Keep tiny settlements proportional: 1 building -> 1 road, etc.
+	if settings.NumBuildings < 10 {
+		return settings.NumBuildings
+	}
+	divisor := float64(max(settings.BuildingsPerRoad, 1))
+	roads := int(math.Round(float64(max(settings.NumBuildings, 1)) / divisor))
+	if roads < 1 {
+		roads = 1
 	}
 	return roads
 }
@@ -833,6 +954,114 @@ func drawLineMasked(img *image.RGBA, x0, y0, x1, y1 int, col color.Color, width 
 			y0 += sy
 		}
 	}
+}
+
+func reduceRepeatedBridges(roads []*Road, waterMask *PixelMask, width, height int, randSrc *rand.Rand) []*Road {
+	if len(roads) == 0 || waterMask == nil {
+		return roads
+	}
+
+	regionByPixel := buildWaterRegionMap(waterMask)
+	if len(regionByPixel) == 0 {
+		return roads
+	}
+
+	// After first bridge on a water body, each additional bridge is progressively less likely.
+	const repeatBridgeFactor = 0.45
+	bodyBridgeCount := make(map[int]int)
+	filtered := make([]*Road, 0, len(roads))
+
+	for _, road := range roads {
+		bridgedBodies := bridgedRegionIDs(road.Points, regionByPixel, width, height)
+		if len(bridgedBodies) == 0 {
+			filtered = append(filtered, road)
+			continue
+		}
+
+		keepProb := 1.0
+		for _, body := range bridgedBodies {
+			c := bodyBridgeCount[body]
+			if c > 0 {
+				keepProb *= math.Pow(repeatBridgeFactor, float64(c))
+			}
+		}
+		if randSrc.Float64() <= keepProb {
+			filtered = append(filtered, road)
+			for _, body := range bridgedBodies {
+				bodyBridgeCount[body]++
+			}
+		}
+	}
+
+	return filtered
+}
+
+func buildWaterRegionMap(waterMask *PixelMask) []int {
+	if waterMask == nil || waterMask.Width <= 0 || waterMask.Height <= 0 {
+		return nil
+	}
+	total := waterMask.Width * waterMask.Height
+	region := make([]int, total)
+	nextRegionID := 1
+
+	queue := make([]int, 0, 1024)
+	for idx := 0; idx < total; idx++ {
+		if waterMask.Data[idx] == 0 || region[idx] != 0 {
+			continue
+		}
+		region[idx] = nextRegionID
+		queue = queue[:0]
+		queue = append(queue, idx)
+
+		for head := 0; head < len(queue); head++ {
+			cur := queue[head]
+			x := cur % waterMask.Width
+			y := cur / waterMask.Width
+
+			neighbors := [][2]int{
+				{x - 1, y}, {x + 1, y},
+				{x, y - 1}, {x, y + 1},
+			}
+			for _, n := range neighbors {
+				nx, ny := n[0], n[1]
+				if nx < 0 || ny < 0 || nx >= waterMask.Width || ny >= waterMask.Height {
+					continue
+				}
+				nidx := ny*waterMask.Width + nx
+				if waterMask.Data[nidx] == 0 || region[nidx] != 0 {
+					continue
+				}
+				region[nidx] = nextRegionID
+				queue = append(queue, nidx)
+			}
+		}
+		nextRegionID++
+	}
+	return region
+}
+
+func bridgedRegionIDs(points []PathPoint, regionByPixel []int, width, height int) []int {
+	if len(points) == 0 || len(regionByPixel) == 0 || width <= 0 || height <= 0 {
+		return nil
+	}
+	seen := make(map[int]bool)
+	out := make([]int, 0, 2)
+	for _, pp := range points {
+		if !pp.IsBridge {
+			continue
+		}
+		x, y := pp.Point.X, pp.Point.Y
+		if x < 0 || y < 0 || x >= width || y >= height {
+			continue
+		}
+		rid := regionByPixel[y*width+x]
+		if rid <= 0 || seen[rid] {
+			continue
+		}
+		seen[rid] = true
+		out = append(out, rid)
+	}
+	return out
 }
 
 func clamp(v, lo, hi float64) float64 {

@@ -38,6 +38,7 @@ type Settings struct {
 	// Road settings
 	MinRoadWidth     float64 `json:"min_road_width"`
 	MaxRoadWidth     float64 `json:"max_road_width"`
+	BuildingsPerRoad int     `json:"buildings_per_road"`
 	RoadExits        int     `json:"road_exits"`
 	RoadCurvyness    float64 `json:"road_curvyness"`
 	RoadDistribution float64 `json:"road_distribution"`
@@ -133,6 +134,7 @@ func LoadSettings() (*Settings, error) {
 				RiverEdgeRoughness:    50,
 				MinRoadWidth:          0.7,
 				MaxRoadWidth:          2.7,
+				BuildingsPerRoad:      6,
 				RoadExits:             5,
 				RoadCurvyness:         50,
 				RoadDistribution:      50,
@@ -194,6 +196,9 @@ func LoadSettings() (*Settings, error) {
 	}
 	if settings.BuildingComplexityRatio == 0 {
 		settings.BuildingComplexityRatio = 50
+	}
+	if settings.BuildingsPerRoad == 0 {
+		settings.BuildingsPerRoad = 6
 	}
 	if _, ok := rawKeys["min_road_angle"]; !ok {
 		settings.MinRoadAngle = 18

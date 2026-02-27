@@ -553,6 +553,18 @@ func main() {
 		settings.MaxRoadWidth = val
 	}))
 
+	buildingsPerRoadSlider := newNumericInputSlider(1, 20, float64(settings.BuildingsPerRoad), "%.0f", "Buildings Per Road")
+	buildingsPerRoadSlider.entry.OnChanged = func(s string) {
+		buildingsPerRoadSlider.validate(s, func(hasError bool) {
+			errorStates["buildingsPerRoad"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	buildingsPerRoadSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := buildingsPerRoadSlider.value.Get()
+		settings.BuildingsPerRoad = int(val)
+	}))
+
 	roadExitsSlider := newNumericInputSlider(0, 100, float64(settings.RoadExits), "%.0f", "Road Exits")
 	roadExitsSlider.entry.OnChanged = func(s string) {
 		roadExitsSlider.validate(s, func(hasError bool) {
@@ -924,6 +936,7 @@ func main() {
 	roadsTab := container.NewTabItem("Roads", container.NewVBox(
 		minRoadWidthSlider,
 		maxRoadWidthSlider,
+		buildingsPerRoadSlider,
 		roadExitsSlider,
 		minRoadAngleSlider,
 		roadCurvynessSlider,

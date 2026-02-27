@@ -290,10 +290,13 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 		}
 		r := size / 2
 		r2 := r * r
+		candidatePixels := make([]int, 0)
+		rejectTree := false
+
 		for y := p.Y - int(r); y <= p.Y+int(r); y++ {
 			for x := p.X - int(r); x <= p.X+int(r); x++ {
 				pt := image.Point{X: x, Y: y}
-				if !pt.In(img.Bounds()) || waterMask.GetPoint(pt) || roadMask.GetPoint(pt) || buildingMask.GetPoint(pt) {
+				if !pt.In(img.Bounds()) {
 					continue
 				}
 				dx := float64(x - p.X)
@@ -301,18 +304,33 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 				if dx*dx+dy*dy > r2 {
 					continue
 				}
-				idx := y*width + x
-				if treeMask.Data[idx] == 0 {
-					treeMask.Data[idx] = 1
-					treePixelsPlaced++
-					if treePixelsPlaced >= targetTreePixels {
-						done = true
-						break
-					}
+				// Reject entire tree if any footprint pixel touches water or buildings.
+				if waterMask.GetPoint(pt) || buildingMask.GetPoint(pt) {
+					rejectTree = true
+					break
 				}
+				// Keep existing road behavior: do not draw over roads.
+				if roadMask.GetPoint(pt) {
+					continue
+				}
+				idx := y*width + x
+				candidatePixels = append(candidatePixels, idx)
 			}
-			if done {
+			if rejectTree {
 				break
+			}
+		}
+		if rejectTree || len(candidatePixels) == 0 {
+			continue
+		}
+		for _, idx := range candidatePixels {
+			if treeMask.Data[idx] == 0 {
+				treeMask.Data[idx] = 1
+				treePixelsPlaced++
+				if treePixelsPlaced >= targetTreePixels {
+					done = true
+					break
+				}
 			}
 		}
 		if done {
