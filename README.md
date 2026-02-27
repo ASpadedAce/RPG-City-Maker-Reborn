@@ -1,6 +1,6 @@
 # RPG City Maker Reborn
 
-**Pre-release Notice:** This project is currently in a pre-release state and is not yet ready for general use. Functionality is very incomplete and subject to change.
+**Pre-release Notice:** This project is currently in a pre-release state, functionality is very incomplete and subject to change.
 
 ## Overview
 
