@@ -11,7 +11,6 @@ import (
 
 	"github.com/aquilax/go-perlin"
 	"github.com/disintegration/imaging"
-	"github.com/ojrac/opensimplex-go"
 )
 
 const (
@@ -220,18 +219,12 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 	if targetTreePixels < 1 {
 		targetTreePixels = 1
 	}
-
-	noise := opensimplex.New(seed)
-	treeNoiseMap := image.NewGray(image.Rect(0, 0, width, height))
-	treeNoiseZoom := 0.05
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			val := noise.Eval2(float64(x)*treeNoiseZoom, float64(y)*treeNoiseZoom)
-			val = (val + 1) / 2
-			treeNoiseMap.SetGray(x, y, color.Gray{Y: uint8(val * 255)})
-		}
+	avgTreeSize := (minTreeSizePx + maxTreeSizePx) / 2.0
+	avgTreeRadius := avgTreeSize / 2.0
+	avgTreeArea := math.Pi * avgTreeRadius * avgTreeRadius
+	if avgTreeArea < 1 {
+		avgTreeArea = 1
 	}
-	threshold := uint8(255 * (1 - (treeCoverage / 100.0)))
 
 	if waterMask == nil {
 		waterMask = NewPixelMask(width, height)
@@ -244,13 +237,23 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 	}
 
 	randSrc := rand.New(rand.NewSource(seed))
-	numClumpTrees := max(1, int(treeClumpiness))
+	// Clumpiness controls only distribution by changing seed node count:
+	// 0% -> many dispersed seeds, 100% -> one seed.
+	maxSeedNodes := int(float64(targetTreePixels) / avgTreeArea)
+	if maxSeedNodes < 1 {
+		maxSeedNodes = 1
+	}
+	clump := clamp(treeClumpiness, 0, 100) / 100.0
+	numClumpTrees := int(math.Round((1.0-clump)*float64(maxSeedNodes-1))) + 1
+	if numClumpTrees < 1 {
+		numClumpTrees = 1
+	}
 
 	initialPoints := make([]image.Point, 0, numClumpTrees)
 	for range numClumpTrees {
 		for range 100 {
 			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
-			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
+			if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
 				initialPoints = append(initialPoints, p)
 				break
 			}
@@ -259,7 +262,7 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 	if len(initialPoints) == 0 {
 		for i := 0; i < 256; i++ {
 			p := image.Point{X: randSrc.Intn(width), Y: randSrc.Intn(height)}
-			if treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
+			if !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p) {
 				initialPoints = append(initialPoints, p)
 				break
 			}
@@ -271,7 +274,7 @@ func GenerateTrees(img *image.RGBA, waterMask, roadMask, buildingMask *PixelMask
 
 	minRadius := minTreeSizePx
 	allPoints := poissonDiscSampling(width, height, minRadius, 30, initialPoints, func(p image.Point) bool {
-		return treeNoiseMap.GrayAt(p.X, p.Y).Y >= threshold && !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p)
+		return !waterMask.GetPoint(p) && !roadMask.GetPoint(p) && !buildingMask.GetPoint(p)
 	}, seed)
 	treeMask := NewPixelMask(width, height)
 	if len(allPoints) == 0 {
