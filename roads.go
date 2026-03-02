@@ -130,6 +130,10 @@ func GenerateRoadsWithPOIs(
 	roadColor := color.RGBA{R: 139, G: 69, B: 19, A: 255}
 	bridgeColor := color.RGBA{R: 60, G: 42, B: 33, A: 255}
 
+	if len(pois) > 0 && wallLayout != nil && wallLayout.Mask != nil {
+		nudgePOIsOutsideWalls(pois, wallLayout.Mask, waterMask, settings, width, height, randSrc)
+	}
+
 	// Edge-case mode: no buildings.
 	if settings.NumBuildings == 0 && roadTarget == 0 && !edgeToEdgeOnly {
 		internalRoads := int(math.Round(clamp(settings.RoadDistribution, 0, 100)))
@@ -172,7 +176,8 @@ func GenerateRoadsWithPOIs(
 	if len(roads) == 0 {
 		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
 	}
-	assignRoadWidths(roads, settings, randSrc, width, height)
+	roads = ensureRoadNetworkConnected(roads, settings, randSrc, waterMask, wallLayout, width, height)
+	assignRoadWidths(roads, settings, randSrc, width, height, wallLayout)
 
 	roadMask := NewPixelMask(width, height)
 	bridgeMask := NewPixelMask(width, height)
@@ -186,6 +191,90 @@ func GenerateRoadsWithPOIs(
 
 	roadAnchors := roadMask.ToPoints()
 	return roadMask, bridgeMask, exitRoadMask, roadAnchors
+}
+
+func nudgePOIsOutsideWalls(pois []*PointOfInterest, wallMask, waterMask *PixelMask, settings *Settings, width, height int, randSrc *rand.Rand) {
+	if len(pois) == 0 || wallMask == nil {
+		return
+	}
+	if waterMask == nil {
+		waterMask = NewPixelMask(width, height)
+	}
+	minWallPx, maxWallPx := getWallWidthRangePixels(settings, width, height)
+	centerX := float64(width-1) * 0.5
+	centerY := float64(height-1) * 0.5
+
+	for _, p := range pois {
+		if p == nil || !wallMask.GetXY(p.X, p.Y) {
+			continue
+		}
+
+		wallWidthPx := minWallPx
+		if maxWallPx > minWallPx {
+			wallWidthPx = minWallPx + randSrc.Float64()*(maxWallPx-minWallPx)
+		}
+		nudgeFactor := 0.02 + randSrc.Float64()*0.03
+		nudgeDist := int(math.Round(wallWidthPx * nudgeFactor))
+		if nudgeDist < 1 {
+			nudgeDist = 1
+		}
+
+		vx := float64(p.X) - centerX
+		vy := float64(p.Y) - centerY
+		vlen := math.Hypot(vx, vy)
+		if vlen < 0.001 {
+			theta := randSrc.Float64() * 2 * math.Pi
+			vx = math.Cos(theta)
+			vy = math.Sin(theta)
+			vlen = 1
+		}
+		dx := vx / vlen
+		dy := vy / vlen
+
+		moved := false
+		for step := 1; step <= nudgeDist+32; step++ {
+			nx := int(math.Round(float64(p.X) + float64(step)*dx))
+			ny := int(math.Round(float64(p.Y) + float64(step)*dy))
+			if nx < 0 || ny < 0 || nx >= width || ny >= height {
+				break
+			}
+			if wallMask.GetXY(nx, ny) || waterMask.GetXY(nx, ny) {
+				continue
+			}
+			p.X = nx
+			p.Y = ny
+			moved = true
+			break
+		}
+		if moved {
+			continue
+		}
+
+		// Fallback: small radial sweep if direct outward ray was blocked.
+		baseAngle := math.Atan2(dy, dx)
+		for a := -6; a <= 6; a++ {
+			ang := baseAngle + float64(a)*math.Pi/18.0
+			adx := math.Cos(ang)
+			ady := math.Sin(ang)
+			for step := 1; step <= nudgeDist+32; step++ {
+				nx := int(math.Round(float64(p.X) + float64(step)*adx))
+				ny := int(math.Round(float64(p.Y) + float64(step)*ady))
+				if nx < 0 || ny < 0 || nx >= width || ny >= height {
+					break
+				}
+				if wallMask.GetXY(nx, ny) || waterMask.GetXY(nx, ny) {
+					continue
+				}
+				p.X = nx
+				p.Y = ny
+				moved = true
+				break
+			}
+			if moved {
+				break
+			}
+		}
+	}
 }
 
 func generateEdgeToEdgeExitRoads(exitRoads, width, height int, settings *Settings, randSrc *rand.Rand, waterMask *PixelMask, wallLayout *FortificationLayout) []*Road {
@@ -580,9 +669,11 @@ func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, 
 			anchor = bestAnchor
 			path = bestPath
 		}
-		if wallLayout != nil && wallLayout.Mask != nil && len(wallLayout.Coverages) > 0 && len(crossedWallIDs(path, wallLayout)) == 0 {
-			// Exit roads should pass through walls when walls exist.
-			continue
+		if wallLayout != nil && wallLayout.Mask != nil && len(wallLayout.Coverages) > 0 {
+			// Exit roads always use the gate-cheat when walls exist so they are always placeable.
+			if forced, ok := forcePathThroughWallGate(anchor, edgeNode, wallLayout, waterMask); ok {
+				path = forced
+			}
 		}
 
 		anchor.Connections++
@@ -602,6 +693,106 @@ func appendExitRoads(roads []*Road, pois []*PointOfInterest, width, height int, 
 
 	_ = exitRoadsAdded
 	return roads
+}
+
+func forcePathThroughWallGate(start, end *PointOfInterest, wallLayout *FortificationLayout, waterMask *PixelMask) ([]PathPoint, bool) {
+	if start == nil || end == nil || wallLayout == nil || wallLayout.Mask == nil {
+		return nil, false
+	}
+	mid, ok := nearestWallPixelToSegment(image.Point{X: start.X, Y: start.Y}, image.Point{X: end.X, Y: end.Y}, wallLayout.Mask)
+	if !ok {
+		return nil, false
+	}
+	tx, ty, ok := estimateWallTangent(mid, wallLayout.Mask)
+	if !ok {
+		return nil, false
+	}
+	nx, ny := -ty, tx
+	rx := float64(end.X - start.X)
+	ry := float64(end.Y - start.Y)
+	if rx*nx+ry*ny < 0 {
+		nx, ny = -nx, -ny
+	}
+	left, lok := walkToOutsideWall(mid, -nx, -ny, wallLayout.Mask)
+	right, rok := walkToOutsideWall(mid, nx, ny, wallLayout.Mask)
+	if !lok || !rok || left == right {
+		return nil, false
+	}
+
+	startPt := image.Point{X: start.X, Y: start.Y}
+	endPt := image.Point{X: end.X, Y: end.Y}
+	entry, exit := left, right
+	d1 := sqDist(startPt, left) + sqDist(endPt, right)
+	d2 := sqDist(startPt, right) + sqDist(endPt, left)
+	if d2 < d1 {
+		entry, exit = right, left
+	}
+
+	seg1 := bresenhamRoad([]image.Point{startPt, entry})
+	seg2 := bresenhamRoad([]image.Point{entry, exit})
+	seg3 := bresenhamRoad([]image.Point{exit, endPt})
+	out := make([]image.Point, 0, len(seg1)+len(seg2)+len(seg3))
+	appendDedup := func(seg []image.Point) {
+		for _, p := range seg {
+			if len(out) > 0 && out[len(out)-1] == p {
+				continue
+			}
+			out = append(out, p)
+		}
+	}
+	appendDedup(seg1)
+	appendDedup(seg2)
+	appendDedup(seg3)
+	return toPathPoints(out, waterMask), true
+}
+
+func nearestWallPixelToSegment(a, b image.Point, wallMask *PixelMask) (image.Point, bool) {
+	if wallMask == nil || wallMask.Width <= 0 || wallMask.Height <= 0 {
+		return image.Point{}, false
+	}
+	best := image.Point{}
+	bestD2 := math.MaxFloat64
+	found := false
+	for y := 0; y < wallMask.Height; y++ {
+		row := y * wallMask.Width
+		for x := 0; x < wallMask.Width; x++ {
+			if wallMask.Data[row+x] == 0 {
+				continue
+			}
+			d2 := pointSegmentDistanceSquared(float64(x), float64(y), float64(a.X), float64(a.Y), float64(b.X), float64(b.Y))
+			if d2 < bestD2 {
+				bestD2 = d2
+				best = image.Point{X: x, Y: y}
+				found = true
+			}
+		}
+	}
+	return best, found
+}
+
+func pointSegmentDistanceSquared(px, py, ax, ay, bx, by float64) float64 {
+	abx := bx - ax
+	aby := by - ay
+	apx := px - ax
+	apy := py - ay
+	den := abx*abx + aby*aby
+	if den <= 1e-9 {
+		dx := px - ax
+		dy := py - ay
+		return dx*dx + dy*dy
+	}
+	t := (apx*abx + apy*aby) / den
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	cx := ax + t*abx
+	cy := ay + t*aby
+	dx := px - cx
+	dy := py - cy
+	return dx*dx + dy*dy
 }
 
 func sampleNonWaterEdgePOI(width, height int, randSrc *rand.Rand, waterMask *PixelMask, used []image.Point) (*PointOfInterest, bool) {
@@ -719,7 +910,7 @@ func normalizeAngle(a float64) float64 {
 	return a
 }
 
-func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, width, height int) {
+func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, width, height int, wallLayout *FortificationLayout) {
 	if len(roads) == 0 {
 		return
 	}
@@ -785,6 +976,13 @@ func assignRoadWidths(roads []*Road, settings *Settings, randSrc *rand.Rand, wid
 
 	for i, r := range roads {
 		w := clamp(widths[i], minWidth, maxWidth)
+		if wallLayout != nil && wallLayout.Mask != nil && len(crossedWallIDs(r.Points, wallLayout)) > 0 {
+			// Wall-gate roads should be visibly substantial.
+			minGateWidth := minWidth + 0.55*(maxWidth-minWidth)
+			if w < minGateWidth {
+				w = minGateWidth
+			}
+		}
 		r.Width = max(1, int(math.Round(w)))
 	}
 }
@@ -1001,7 +1199,7 @@ func straightenPathAcrossWalls(points []PathPoint, wallLayout *FortificationLayo
 		if end >= len(points) {
 			end = len(points) - 1
 		}
-		line := bresenhamRoad([]image.Point{points[start].Point, points[end].Point})
+		line := enforcePerpendicularWallCrossing(points, start, i, j, end, wallLayout)
 		for k, p := range line {
 			if len(straight) > 0 && k == 0 && straight[len(straight)-1] == p {
 				continue
@@ -1012,6 +1210,154 @@ func straightenPathAcrossWalls(points []PathPoint, wallLayout *FortificationLayo
 	}
 
 	return toPathPoints(straight, waterMask)
+}
+
+func enforcePerpendicularWallCrossing(points []PathPoint, start, wallStart, wallEnd, end int, wallLayout *FortificationLayout) []image.Point {
+	startPt := points[start].Point
+	endPt := points[end].Point
+	baseLine := bresenhamRoad([]image.Point{startPt, endPt})
+	if wallLayout == nil || wallLayout.Mask == nil {
+		return baseLine
+	}
+	if wallStart < 0 || wallEnd <= wallStart || wallEnd > len(points) {
+		return baseLine
+	}
+
+	mid := points[wallStart+(wallEnd-wallStart)/2].Point
+	tx, ty, ok := estimateWallTangent(mid, wallLayout.Mask)
+	if !ok {
+		return baseLine
+	}
+	rx := float64(endPt.X - startPt.X)
+	ry := float64(endPt.Y - startPt.Y)
+	if crossingAngleToTangentDegrees(rx, ry, tx, ty) >= 75.0 {
+		return baseLine
+	}
+
+	// Build a forced gate across the wall: one anchor just outside each side of the wall.
+	nx, ny := -ty, tx
+	vdot := rx*nx + ry*ny
+	if vdot < 0 {
+		nx, ny = -nx, -ny
+	}
+	left, lok := walkToOutsideWall(mid, -nx, -ny, wallLayout.Mask)
+	right, rok := walkToOutsideWall(mid, nx, ny, wallLayout.Mask)
+	if !lok || !rok || left == right {
+		return baseLine
+	}
+
+	entry, exit := left, right
+	d1 := sqDist(startPt, left) + sqDist(endPt, right)
+	d2 := sqDist(startPt, right) + sqDist(endPt, left)
+	if d2 < d1 {
+		entry, exit = right, left
+	}
+
+	seg1 := bresenhamRoad([]image.Point{startPt, entry})
+	seg2 := bresenhamRoad([]image.Point{entry, exit})
+	seg3 := bresenhamRoad([]image.Point{exit, endPt})
+	out := make([]image.Point, 0, len(seg1)+len(seg2)+len(seg3))
+	appendDedup := func(seg []image.Point) {
+		for _, p := range seg {
+			if len(out) > 0 && out[len(out)-1] == p {
+				continue
+			}
+			out = append(out, p)
+		}
+	}
+	appendDedup(seg1)
+	appendDedup(seg2)
+	appendDedup(seg3)
+	return out
+}
+
+func estimateWallTangent(mid image.Point, wallMask *PixelMask) (float64, float64, bool) {
+	if wallMask == nil {
+		return 0, 0, false
+	}
+	const r = 4
+	var pts [][2]float64
+	for dy := -r; dy <= r; dy++ {
+		y := mid.Y + dy
+		if y < 0 || y >= wallMask.Height {
+			continue
+		}
+		for dx := -r; dx <= r; dx++ {
+			x := mid.X + dx
+			if x < 0 || x >= wallMask.Width {
+				continue
+			}
+			if wallMask.GetXY(x, y) {
+				pts = append(pts, [2]float64{float64(x), float64(y)})
+			}
+		}
+	}
+	if len(pts) < 3 {
+		return 0, 0, false
+	}
+
+	var mx, my float64
+	for _, p := range pts {
+		mx += p[0]
+		my += p[1]
+	}
+	mx /= float64(len(pts))
+	my /= float64(len(pts))
+
+	var sxx, syy, sxy float64
+	for _, p := range pts {
+		dx := p[0] - mx
+		dy := p[1] - my
+		sxx += dx * dx
+		syy += dy * dy
+		sxy += dx * dy
+	}
+	if sxx+syy < 0.001 {
+		return 0, 0, false
+	}
+	theta := 0.5 * math.Atan2(2*sxy, sxx-syy)
+	return math.Cos(theta), math.Sin(theta), true
+}
+
+func crossingAngleToTangentDegrees(rx, ry, tx, ty float64) float64 {
+	rn := math.Hypot(rx, ry)
+	tn := math.Hypot(tx, ty)
+	if rn < 0.001 || tn < 0.001 {
+		return 90
+	}
+	dot := (rx*tx + ry*ty) / (rn * tn)
+	if dot < -1 {
+		dot = -1
+	}
+	if dot > 1 {
+		dot = 1
+	}
+	ang := math.Acos(math.Abs(dot)) * 180.0 / math.Pi
+	return ang
+}
+
+func walkToOutsideWall(mid image.Point, dx, dy float64, wallMask *PixelMask) (image.Point, bool) {
+	if wallMask == nil {
+		return image.Point{}, false
+	}
+	maxSteps := max(8, (wallMask.Width+wallMask.Height)/12)
+	for s := 1; s <= maxSteps; s++ {
+		x := int(math.Round(float64(mid.X) + dx*float64(s)))
+		y := int(math.Round(float64(mid.Y) + dy*float64(s)))
+		if x < 0 || y < 0 || x >= wallMask.Width || y >= wallMask.Height {
+			return image.Point{}, false
+		}
+		if !wallMask.GetXY(x, y) {
+			return image.Point{X: x, Y: y}, true
+		}
+	}
+	return image.Point{}, false
+}
+
+func sqDist(a, b image.Point) int {
+	dx := a.X - b.X
+	dy := a.Y - b.Y
+	return dx*dx + dy*dy
 }
 
 func crossedWallIDs(points []PathPoint, wallLayout *FortificationLayout) []int {
@@ -1088,6 +1434,10 @@ func applyWallCrossingRules(roads []*Road, wallLayout *FortificationLayout, wate
 			}
 			continue
 		}
+		if crossesSameWallMultipleTimes(info.road.Points, wallLayout) {
+			keep[i] = false
+			continue
+		}
 
 		keepProb := 1.0
 		for _, wid := range info.ids {
@@ -1131,6 +1481,132 @@ func applyWallCrossingRules(roads []*Road, wallLayout *FortificationLayout, wate
 		}
 	}
 	return filtered
+}
+
+func crossesSameWallMultipleTimes(points []PathPoint, wallLayout *FortificationLayout) bool {
+	if wallLayout == nil || wallLayout.Mask == nil || len(points) < 2 {
+		return false
+	}
+	transitionCount := make(map[int]int)
+	prevID := wallIDAtPoint(points[0].Point, wallLayout)
+	for i := 1; i < len(points); i++ {
+		currID := wallIDAtPoint(points[i].Point, wallLayout)
+		if (prevID == 0 && currID > 0) || (prevID > 0 && currID == 0) {
+			wid := currID
+			if wid == 0 {
+				wid = prevID
+			}
+			if wid > 0 {
+				transitionCount[wid]++
+				// More than two transitions means re-crossing the same wall.
+				if transitionCount[wid] > 2 {
+					return true
+				}
+			}
+		}
+		prevID = currID
+	}
+	return false
+}
+
+func ensureRoadNetworkConnected(roads []*Road, settings *Settings, randSrc *rand.Rand, waterMask *PixelMask, wallLayout *FortificationLayout, width, height int) []*Road {
+	if len(roads) <= 1 {
+		return roads
+	}
+
+	avgDim := float64(width+height) / 2.0
+	const maxConnectorAttempts = 32
+
+	for attempts := 0; attempts < maxConnectorAttempts; attempts++ {
+		nodeIndex := make(map[*PointOfInterest]int)
+		nodes := make([]*PointOfInterest, 0, len(roads)*2)
+		getNodeID := func(p *PointOfInterest) int {
+			if id, ok := nodeIndex[p]; ok {
+				return id
+			}
+			id := len(nodes)
+			nodeIndex[p] = id
+			nodes = append(nodes, p)
+			return id
+		}
+		adj := make([][]int, 0, len(roads)*2)
+		ensureAdj := func(n int) {
+			for len(adj) <= n {
+				adj = append(adj, nil)
+			}
+		}
+		for _, r := range roads {
+			a := getNodeID(r.Start)
+			b := getNodeID(r.End)
+			ensureAdj(a)
+			ensureAdj(b)
+			adj[a] = append(adj[a], b)
+			adj[b] = append(adj[b], a)
+		}
+
+		compID := make([]int, len(nodes))
+		for i := range compID {
+			compID[i] = -1
+		}
+		compCount := 0
+		queue := make([]int, 0, len(nodes))
+		for i := 0; i < len(nodes); i++ {
+			if compID[i] != -1 {
+				continue
+			}
+			compID[i] = compCount
+			queue = queue[:0]
+			queue = append(queue, i)
+			for h := 0; h < len(queue); h++ {
+				cur := queue[h]
+				for _, nb := range adj[cur] {
+					if compID[nb] != -1 {
+						continue
+					}
+					compID[nb] = compCount
+					queue = append(queue, nb)
+				}
+			}
+			compCount++
+		}
+		if compCount <= 1 {
+			return roads
+		}
+
+		bestA, bestB := -1, -1
+		bestDist2 := math.MaxFloat64
+		for i := 0; i < len(nodes); i++ {
+			for j := i + 1; j < len(nodes); j++ {
+				if compID[i] == compID[j] {
+					continue
+				}
+				dx := float64(nodes[i].X - nodes[j].X)
+				dy := float64(nodes[i].Y - nodes[j].Y)
+				d2 := dx*dx + dy*dy
+				if d2 < bestDist2 {
+					bestDist2 = d2
+					bestA, bestB = i, j
+				}
+			}
+		}
+		if bestA == -1 || bestB == -1 {
+			return roads
+		}
+
+		a := nodes[bestA]
+		b := nodes[bestB]
+		a.Connections++
+		b.Connections++
+		path := calculateRoadPath(a, b, settings.RoadCurvyness/100.0, avgDim, randSrc, waterMask, wallLayout)
+		roads = append(roads, &Road{
+			Start:      a,
+			End:        b,
+			Points:     path,
+			Importance: a.Connections + b.Connections + 2,
+		})
+	}
+
+	return roads
 }
 
 // drawLineMasked draws a line with specified width on the image and mask.

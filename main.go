@@ -298,6 +298,7 @@ func main() {
 			}{rd: rd, br: br, ex: ex, anc: anc}
 		}); ok {
 			roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+			drawWallMask(roadBase, wallMask)
 			finalImage = roadBase
 		} else {
 			log.Println("GenerateRoads timed out after 1 minute; continuing.")
@@ -920,6 +921,7 @@ func main() {
 				}{rd: rd, br: br, ex: ex, anc: anc}
 			}); ok {
 				roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+				drawWallMask(roadBase, wallMask)
 				finalImage = roadBase
 			} else {
 				log.Println("GenerateRoads timed out after 1 minute; continuing.")

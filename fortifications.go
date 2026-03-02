@@ -345,3 +345,18 @@ func cloneMask(src *PixelMask) *PixelMask {
 	copy(dst.Data, src.Data)
 	return dst
 }
+
+func drawWallMask(img *image.RGBA, wallMask *PixelMask) {
+	if img == nil || wallMask == nil {
+		return
+	}
+	black := color.RGBA{R: 0, G: 0, B: 0, A: 255}
+	for y := 0; y < wallMask.Height; y++ {
+		row := y * wallMask.Width
+		for x := 0; x < wallMask.Width; x++ {
+			if wallMask.Data[row+x] != 0 {
+				img.Set(x, y, black)
+			}
+		}
+	}
+}
