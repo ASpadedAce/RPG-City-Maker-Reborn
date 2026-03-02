@@ -12,6 +12,10 @@ const (
 	minWallWidthPercent  = minBuildingSizePercent
 	maxWallWidthPercent  = maxBuildingSizePercent
 	wallWidthPercentStep = buildingSizePercentStep
+
+	minTurretSizePercent  = 0.2
+	maxTurretSizePercent  = maxWallWidthPercent
+	turretSizePercentStep = 0.1
 )
 
 func clampWallWidthPercent(v float64) float64 {
@@ -54,6 +58,35 @@ func getWallWidthRangePixels(settings *Settings, width, height int) (float64, fl
 		maxPx = 1
 	}
 	return minPx, maxPx
+}
+
+func clampTurretSizePercent(v float64) float64 {
+	if v < minTurretSizePercent {
+		return minTurretSizePercent
+	}
+	if v > maxTurretSizePercent {
+		return maxTurretSizePercent
+	}
+	return v
+}
+
+func snapTurretSizePercent(v float64) float64 {
+	v = clampTurretSizePercent(v)
+	steps := math.Round((v - minTurretSizePercent) / turretSizePercentStep)
+	return clampTurretSizePercent(minTurretSizePercent + steps*turretSizePercentStep)
+}
+
+func getTurretSizePixels(settings *Settings, width, height int) float64 {
+	sizePercent := snapTurretSizePercent(settings.TurretSize)
+	avgDim := averageImageDimension(width, height)
+	if avgDim < 1 {
+		avgDim = 1
+	}
+	sizePx := (sizePercent / 100.0) * avgDim
+	if sizePx < 1 {
+		sizePx = 1
+	}
+	return sizePx
 }
 
 type FortificationLayout struct {
@@ -359,4 +392,325 @@ func drawWallMask(img *image.RGBA, wallMask *PixelMask) {
 			}
 		}
 	}
+}
+
+func GenerateTurrets(
+	img *image.RGBA,
+	width, height int,
+	settings *Settings,
+	layout *FortificationLayout,
+	waterMask, roadMask *PixelMask,
+	roads []*Road,
+) *PixelMask {
+	mask := NewPixelMask(width, height)
+	if !settings.ShowTurrets || layout == nil || layout.Mask == nil || len(layout.WallIDByPixel) != width*height {
+		return mask
+	}
+	if img == nil {
+		img = image.NewRGBA(image.Rect(0, 0, width, height))
+	}
+	if waterMask == nil {
+		waterMask = NewPixelMask(width, height)
+	}
+	if roadMask == nil {
+		roadMask = NewPixelMask(width, height)
+	}
+
+	sizePx := getTurretSizePixels(settings, width, height)
+	radius := int(math.Round(sizePx / 2.0))
+	if radius < 1 {
+		radius = 1
+	}
+	shape := settings.TurretShape
+	if shape != "square" {
+		shape = "circular"
+	}
+	colorRed := color.RGBA{R: 220, G: 25, B: 25, A: 255}
+
+	wallPoints := make(map[int][]image.Point)
+	waterMeetPoints := make(map[int][]image.Point)
+	for y := 0; y < height; y++ {
+		row := y * width
+		for x := 0; x < width; x++ {
+			wid := layout.WallIDByPixel[row+x]
+			if wid <= 0 {
+				continue
+			}
+			if !isBoundaryWallPixel(x, y, layout.Mask) {
+				continue
+			}
+			p := image.Point{X: x, Y: y}
+			wallPoints[wid] = append(wallPoints[wid], p)
+			if touchesWater(x, y, waterMask) {
+				waterMeetPoints[wid] = append(waterMeetPoints[wid], p)
+			}
+		}
+	}
+
+	occupied := make(map[int]bool)
+	addTurret := func(center image.Point) {
+		snapped, ok := snapPointToWall(center, layout.Mask, max(3, radius*4))
+		if !ok {
+			return
+		}
+		if nearbyTurretExists(mask, snapped, max(2, radius)) {
+			return
+		}
+		key := snapped.Y*width + snapped.X
+		if occupied[key] {
+			return
+		}
+		occupied[key] = true
+		drawTurret(img, mask, snapped, radius, shape, colorRed)
+	}
+
+	// Base spacing turrets along each wall ring.
+	for wid, pts := range wallPoints {
+		if len(pts) == 0 {
+			continue
+		}
+		centroid := averagePoint(pts)
+		sort.Slice(pts, func(i, j int) bool {
+			ai := math.Atan2(float64(pts[i].Y-centroid.Y), float64(pts[i].X-centroid.X))
+			aj := math.Atan2(float64(pts[j].Y-centroid.Y), float64(pts[j].X-centroid.X))
+			return ai < aj
+		})
+		// Spacing is "distance along wall as % of wall circumference", independent of turret size.
+		spacingPct := clamp(settings.TurretSpacing, 0, 100)
+		step := int(math.Round((spacingPct / 100.0) * float64(len(pts))))
+		if step < 1 {
+			step = 1
+		}
+		if step > len(pts) {
+			step = len(pts)
+		}
+		for i := 0; i < len(pts); i += step {
+			addTurret(pts[i])
+		}
+
+		// Always place turrets where wall meets water.
+		for _, p := range waterMeetPoints[wid] {
+			addTurret(p)
+		}
+	}
+
+	// Gate turrets: one on each side of each road crossing, spacing = 3x road width.
+	for _, r := range roads {
+		if r == nil || len(r.Points) < 2 {
+			continue
+		}
+		gates := roadGateCentersForRoad(r, layout)
+		if len(gates) == 0 {
+			continue
+		}
+		for _, g := range gates {
+			tx, ty, ok := fortEstimateWallTangent(g, layout.Mask)
+			if !ok {
+				continue
+			}
+			offset := 1.5 * float64(max(1, r.Width))
+			left := image.Point{
+				X: int(math.Round(float64(g.X) + tx*offset)),
+				Y: int(math.Round(float64(g.Y) + ty*offset)),
+			}
+			right := image.Point{
+				X: int(math.Round(float64(g.X) - tx*offset)),
+				Y: int(math.Round(float64(g.Y) - ty*offset)),
+			}
+			addTurret(left)
+			addTurret(right)
+		}
+	}
+
+	return mask
+}
+
+func isBoundaryWallPixel(x, y int, wallMask *PixelMask) bool {
+	if wallMask == nil || !wallMask.GetXY(x, y) {
+		return false
+	}
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			nx, ny := x+dx, y+dy
+			if !wallMask.InBounds(nx, ny) || !wallMask.GetXY(nx, ny) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func touchesWater(x, y int, waterMask *PixelMask) bool {
+	if waterMask == nil {
+		return false
+	}
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			nx, ny := x+dx, y+dy
+			if waterMask.GetXY(nx, ny) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func averagePoint(points []image.Point) image.Point {
+	if len(points) == 0 {
+		return image.Point{}
+	}
+	var sx, sy int
+	for _, p := range points {
+		sx += p.X
+		sy += p.Y
+	}
+	return image.Point{X: sx / len(points), Y: sy / len(points)}
+}
+
+func drawTurret(img *image.RGBA, mask *PixelMask, center image.Point, radius int, shape string, col color.RGBA) {
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			if shape == "circular" && dx*dx+dy*dy > radius*radius {
+				continue
+			}
+			x, y := center.X+dx, center.Y+dy
+			if !mask.InBounds(x, y) {
+				continue
+			}
+			mask.SetXY(x, y)
+			img.Set(x, y, col)
+		}
+	}
+}
+
+func nearbyTurretExists(mask *PixelMask, center image.Point, radius int) bool {
+	if mask == nil {
+		return false
+	}
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			if dx*dx+dy*dy > radius*radius {
+				continue
+			}
+			if mask.GetXY(center.X+dx, center.Y+dy) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func snapPointToWall(center image.Point, wallMask *PixelMask, maxRadius int) (image.Point, bool) {
+	if wallMask == nil {
+		return image.Point{}, false
+	}
+	if wallMask.GetXY(center.X, center.Y) {
+		return center, true
+	}
+	if maxRadius < 1 {
+		maxRadius = 1
+	}
+	best := image.Point{}
+	bestD2 := math.MaxInt
+	found := false
+	for r := 1; r <= maxRadius; r++ {
+		minX := center.X - r
+		maxX := center.X + r
+		minY := center.Y - r
+		maxY := center.Y + r
+		for y := minY; y <= maxY; y++ {
+			for x := minX; x <= maxX; x++ {
+				if x != minX && x != maxX && y != minY && y != maxY {
+					continue
+				}
+				if !wallMask.GetXY(x, y) {
+					continue
+				}
+				dx := x - center.X
+				dy := y - center.Y
+				d2 := dx*dx + dy*dy
+				if d2 < bestD2 {
+					bestD2 = d2
+					best = image.Point{X: x, Y: y}
+					found = true
+				}
+			}
+		}
+		if found {
+			return best, true
+		}
+	}
+	return image.Point{}, false
+}
+
+func roadGateCentersForRoad(r *Road, layout *FortificationLayout) []image.Point {
+	out := make([]image.Point, 0, 2)
+	if r == nil || layout == nil || layout.Mask == nil || len(r.Points) < 2 {
+		return out
+	}
+	prevID := 0
+	if layout.Mask.InBounds(r.Points[0].Point.X, r.Points[0].Point.Y) {
+		prevID = layout.WallIDByPixel[r.Points[0].Point.Y*layout.Mask.Width+r.Points[0].Point.X]
+	}
+	for i := 1; i < len(r.Points); i++ {
+		p := r.Points[i].Point
+		currID := 0
+		if layout.Mask.InBounds(p.X, p.Y) {
+			currID = layout.WallIDByPixel[p.Y*layout.Mask.Width+p.X]
+		}
+		if (prevID == 0 && currID > 0) || (prevID > 0 && currID == 0) {
+			out = append(out, p)
+		}
+		prevID = currID
+	}
+	return out
+}
+
+func fortEstimateWallTangent(mid image.Point, wallMask *PixelMask) (float64, float64, bool) {
+	if wallMask == nil {
+		return 0, 0, false
+	}
+	const r = 4
+	var pts [][2]float64
+	for dy := -r; dy <= r; dy++ {
+		y := mid.Y + dy
+		if y < 0 || y >= wallMask.Height {
+			continue
+		}
+		for dx := -r; dx <= r; dx++ {
+			x := mid.X + dx
+			if x < 0 || x >= wallMask.Width {
+				continue
+			}
+			if wallMask.GetXY(x, y) {
+				pts = append(pts, [2]float64{float64(x), float64(y)})
+			}
+		}
+	}
+	if len(pts) < 3 {
+		return 0, 0, false
+	}
+	var mx, my float64
+	for _, p := range pts {
+		mx += p[0]
+		my += p[1]
+	}
+	mx /= float64(len(pts))
+	my /= float64(len(pts))
+	var sxx, syy, sxy float64
+	for _, p := range pts {
+		dx := p[0] - mx
+		dy := p[1] - my
+		sxx += dx * dx
+		syy += dy * dy
+		sxy += dx * dy
+	}
+	if sxx+syy < 0.001 {
+		return 0, 0, false
+	}
+	theta := 0.5 * math.Atan2(2*sxy, sxx-syy)
+	return math.Cos(theta), math.Sin(theta), true
 }

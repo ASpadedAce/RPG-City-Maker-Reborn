@@ -88,7 +88,8 @@ func GenerateRoads(
 	waterMask *PixelMask,
 	seed int64,
 ) (*PixelMask, *PixelMask, *PixelMask, []image.Point) {
-	return GenerateRoadsWithPOIs(img, width, height, settings, waterMask, nil, nil, 0, false, seed)
+	roadMask, bridgeMask, exitRoadMask, roadAnchors, _ := GenerateRoadsWithPOIs(img, width, height, settings, waterMask, nil, nil, 0, false, seed)
+	return roadMask, bridgeMask, exitRoadMask, roadAnchors
 }
 
 func PrepareRoadNodes(width, height int, settings *Settings, waterMask *PixelMask, seed int64) ([]*PointOfInterest, int, bool) {
@@ -122,7 +123,7 @@ func GenerateRoadsWithPOIs(
 	roadTarget int,
 	edgeToEdgeOnly bool,
 	seed int64,
-) (*PixelMask, *PixelMask, *PixelMask, []image.Point) {
+) (*PixelMask, *PixelMask, *PixelMask, []image.Point, []*Road) {
 	if img == nil {
 		img = image.NewRGBA(image.Rect(0, 0, width, height))
 	}
@@ -139,7 +140,7 @@ func GenerateRoadsWithPOIs(
 		internalRoads := int(math.Round(clamp(settings.RoadDistribution, 0, 100)))
 		exitRoads := max(0, settings.RoadExits)
 		if internalRoads == 0 && exitRoads == 0 {
-			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil, nil
 		}
 		if internalRoads > 0 {
 			roadTarget = internalRoads
@@ -159,22 +160,22 @@ func GenerateRoadsWithPOIs(
 			pois = generatePOIs(width, height, settings, waterMask, randSrc, roadTarget)
 		}
 		if len(pois) < 2 {
-			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+			return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil, nil
 		}
 		roads = connectPOIs(pois, width, height, settings, randSrc, waterMask, wallLayout, roadTarget)
 		roads = appendExitRoads(roads, pois, width, height, settings, randSrc, waterMask, wallLayout)
 	}
 
 	if len(roads) == 0 {
-		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil, nil
 	}
 	roads = applyWallCrossingRules(roads, wallLayout, waterMask, randSrc)
 	if len(roads) == 0 {
-		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil, nil
 	}
 	roads = reduceRepeatedBridges(roads, waterMask, width, height, randSrc)
 	if len(roads) == 0 {
-		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil
+		return NewPixelMask(width, height), NewPixelMask(width, height), NewPixelMask(width, height), nil, nil
 	}
 	roads = ensureRoadNetworkConnected(roads, settings, randSrc, waterMask, wallLayout, width, height)
 	assignRoadWidths(roads, settings, randSrc, width, height, wallLayout)
@@ -190,7 +191,7 @@ func GenerateRoadsWithPOIs(
 	}
 
 	roadAnchors := roadMask.ToPoints()
-	return roadMask, bridgeMask, exitRoadMask, roadAnchors
+	return roadMask, bridgeMask, exitRoadMask, roadAnchors, roads
 }
 
 func nudgePOIsOutsideWalls(pois []*PointOfInterest, wallMask, waterMask *PixelMask, settings *Settings, width, height int, randSrc *rand.Rand) {

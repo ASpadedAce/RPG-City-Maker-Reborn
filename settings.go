@@ -50,6 +50,10 @@ type Settings struct {
 	NumWalls      int     `json:"num_walls"`
 	CityCoverage  float64 `json:"city_coverage"`
 	WallCurvyness float64 `json:"wall_curvyness"`
+	ShowTurrets   bool    `json:"show_turrets"`
+	TurretSize    float64 `json:"turret_size"`
+	TurretShape   string  `json:"turret_shape"`
+	TurretSpacing float64 `json:"turret_spacing"`
 
 	// Building settings
 	NumBuildings         int     `json:"num_buildings"`
@@ -151,6 +155,10 @@ func LoadSettings() (*Settings, error) {
 				NumWalls:              1,
 				CityCoverage:          70,
 				WallCurvyness:         35,
+				ShowTurrets:           true,
+				TurretSize:            0.6,
+				TurretShape:           "circular",
+				TurretSpacing:         55,
 				NumBuildings:          200,
 				MinBuildingSize:       3.5,
 				MaxBuildingSize:       10.0,
@@ -230,6 +238,18 @@ func LoadSettings() (*Settings, error) {
 	if _, ok := rawKeys["wall_curvyness"]; !ok {
 		settings.WallCurvyness = 35
 	}
+	if _, ok := rawKeys["show_turrets"]; !ok {
+		settings.ShowTurrets = true
+	}
+	if _, ok := rawKeys["turret_size"]; !ok {
+		settings.TurretSize = 0.6
+	}
+	if _, ok := rawKeys["turret_shape"]; !ok || (settings.TurretShape != "square" && settings.TurretShape != "circular") {
+		settings.TurretShape = "circular"
+	}
+	if _, ok := rawKeys["turret_spacing"]; !ok {
+		settings.TurretSpacing = 55
+	}
 
 	// Wall widths are percentages of average image dimension.
 	// Migrate older pixel-based values when they exceed the valid percentage range.
@@ -250,6 +270,8 @@ func LoadSettings() (*Settings, error) {
 	}
 	settings.CityCoverage = clamp(settings.CityCoverage, 1, 100)
 	settings.WallCurvyness = clamp(settings.WallCurvyness, 0, 100)
+	settings.TurretSize = snapTurretSizePercent(settings.TurretSize)
+	settings.TurretSpacing = clamp(settings.TurretSpacing, 0, 100)
 
 	// Tree sizes are percentages of average image dimension.
 	// Migrate older pixel-based values when they exceed the valid percentage range.

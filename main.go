@@ -96,6 +96,7 @@ func main() {
 	var bridgeMask *PixelMask
 	var exitRoadMask *PixelMask
 	var wallMask *PixelMask
+	var turretMask *PixelMask
 
 	// Set up application configuration directory
 	configDir, err := os.UserConfigDir()
@@ -282,29 +283,34 @@ func main() {
 
 		// Step 6: Generating Roads
 		var roadAnchors []image.Point
+		var roadList []*Road
 		roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
 			rd  *PixelMask
 			br  *PixelMask
 			ex  *PixelMask
 			anc []image.Point
+			rl  []*Road
 		} {
-			rd, br, ex, anc := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
+			rd, br, ex, anc, rl := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
 			return struct {
 				rd  *PixelMask
 				br  *PixelMask
 				ex  *PixelMask
 				anc []image.Point
-			}{rd: rd, br: br, ex: ex, anc: anc}
+				rl  []*Road
+			}{rd: rd, br: br, ex: ex, anc: anc, rl: rl}
 		}); ok {
-			roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+			roadMask, bridgeMask, exitRoadMask, roadAnchors, roadList = out.rd, out.br, out.ex, out.anc, out.rl
 			drawWallMask(roadBase, wallMask)
+			turretMask = GenerateTurrets(roadBase, settings.Width, settings.Height, settings, wallLayout, waterMask, roadMask, roadList)
 			finalImage = roadBase
 		} else {
 			log.Println("GenerateRoads timed out after 1 minute; continuing.")
 			roadMask = NewPixelMask(settings.Width, settings.Height)
 			bridgeMask = NewPixelMask(settings.Width, settings.Height)
 			exitRoadMask = NewPixelMask(settings.Width, settings.Height)
+			turretMask = NewPixelMask(settings.Width, settings.Height)
 			roadAnchors = nil
 		}
 
@@ -731,6 +737,59 @@ func main() {
 		settings.WallCurvyness = val
 	}))
 
+	showTurretsCheck := widget.NewCheck("Show Turrets", func(v bool) {
+		settings.ShowTurrets = v
+	})
+	showTurretsCheck.SetChecked(settings.ShowTurrets)
+
+	turretSizeSlider := newNumericInputSliderWithStep(minTurretSizePercent, maxTurretSizePercent, settings.TurretSize, turretSizePercentStep, "%.1f%%", "Turret Size")
+	turretSizeSlider.entry.OnChanged = func(s string) {
+		turretSizeSlider.validate(s, func(hasError bool) {
+			errorStates["turretSize"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	turretSizeSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := turretSizeSlider.value.Get()
+		settings.TurretSize = val
+	}))
+
+	turretShapeLabel := widget.NewLabel("Turret Shape:")
+	turretShapeSelect := widget.NewSelect([]string{"circular", "square"}, func(s string) {
+		settings.TurretShape = s
+	})
+	turretShapeSelect.SetSelected(settings.TurretShape)
+
+	turretSpacingSlider := newNumericInputSlider(0, 100, settings.TurretSpacing, "%.0f%%", "Turret Spacing")
+	turretSpacingSlider.entry.OnChanged = func(s string) {
+		turretSpacingSlider.validate(s, func(hasError bool) {
+			errorStates["turretSpacing"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	turretSpacingSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := turretSpacingSlider.value.Get()
+		settings.TurretSpacing = val
+	}))
+
+	turretControls := container.NewVBox(
+		turretSizeSlider,
+		turretShapeLabel,
+		turretShapeSelect,
+		turretSpacingSlider,
+	)
+	if !settings.ShowTurrets {
+		turretControls.Hide()
+	}
+	showTurretsCheck.OnChanged = func(v bool) {
+		settings.ShowTurrets = v
+		if v {
+			turretControls.Show()
+		} else {
+			turretControls.Hide()
+		}
+	}
+
 	// Create UI elements for error display and action buttons
 	errorLabel := widget.NewLabel("")
 	errorLabel.Wrapping = fyne.TextWrapWord
@@ -749,7 +808,7 @@ func main() {
 		showSaveDialog(w, bumpmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverMask, treeMask, roadMask, bridgeMask, wallMask, buildingMask)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverMask, treeMask, roadMask, bridgeMask, wallMask, turretMask, buildingMask)
 	})
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
@@ -905,23 +964,27 @@ func main() {
 				progressBar.SetValue(6.0 / 13.0)
 			})
 			var roadAnchors []image.Point
+			var roadList []*Road
 			roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
 				rd  *PixelMask
 				br  *PixelMask
 				ex  *PixelMask
 				anc []image.Point
+				rl  []*Road
 			} {
-				rd, br, ex, anc := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
+				rd, br, ex, anc, rl := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
 				return struct {
 					rd  *PixelMask
 					br  *PixelMask
 					ex  *PixelMask
 					anc []image.Point
-				}{rd: rd, br: br, ex: ex, anc: anc}
+					rl  []*Road
+				}{rd: rd, br: br, ex: ex, anc: anc, rl: rl}
 			}); ok {
-				roadMask, bridgeMask, exitRoadMask, roadAnchors = out.rd, out.br, out.ex, out.anc
+				roadMask, bridgeMask, exitRoadMask, roadAnchors, roadList = out.rd, out.br, out.ex, out.anc, out.rl
 				drawWallMask(roadBase, wallMask)
+				turretMask = GenerateTurrets(roadBase, settings.Width, settings.Height, settings, wallLayout, waterMask, roadMask, roadList)
 				finalImage = roadBase
 			} else {
 				log.Println("GenerateRoads timed out after 1 minute; continuing.")
@@ -929,6 +992,7 @@ func main() {
 				roadMask = NewPixelMask(settings.Width, settings.Height)
 				bridgeMask = NewPixelMask(settings.Width, settings.Height)
 				exitRoadMask = NewPixelMask(settings.Width, settings.Height)
+				turretMask = NewPixelMask(settings.Width, settings.Height)
 				roadAnchors = nil
 			}
 			placementMask := cloneMask(roadMask)
@@ -1135,6 +1199,8 @@ func main() {
 		numWallsSlider,
 		cityCoverageSlider,
 		wallCurvynessSlider,
+		showTurretsCheck,
+		turretControls,
 	))
 	numBuildingsSlider := newNumericInputSlider(0, 10000, float64(settings.NumBuildings), "%.0f", "Number of Buildings")
 	numBuildingsSlider.entry.OnChanged = func(s string) {
@@ -1498,7 +1564,7 @@ func encodeImageToWriter(w io.Writer, img image.Image, format string) error {
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverMask, treeMask, roadMask, bridgeMask, wallMask, buildingMask *PixelMask) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverMask, treeMask, roadMask, bridgeMask, wallMask, turretMask, buildingMask *PixelMask) {
 	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
@@ -1583,6 +1649,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 			{name: "roads_mask." + imgFormat, make: func() image.Image { return maskToGray(roadMask) }},
 			{name: "bridges_mask." + imgFormat, make: func() image.Image { return maskToGray(bridgeMask) }},
 			{name: "walls_mask." + imgFormat, make: func() image.Image { return maskToGray(wallMask) }},
+			{name: "turrets_mask." + imgFormat, make: func() image.Image { return maskToGray(turretMask) }},
 			{name: "buildings_mask." + imgFormat, make: func() image.Image { return maskToGray(buildingMask) }},
 		}
 
