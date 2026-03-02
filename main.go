@@ -95,6 +95,7 @@ func main() {
 	var roadMask *PixelMask
 	var bridgeMask *PixelMask
 	var exitRoadMask *PixelMask
+	var wallMask *PixelMask
 
 	// Set up application configuration directory
 	configDir, err := os.UserConfigDir()
@@ -231,7 +232,55 @@ func main() {
 		if riverMask != nil {
 			waterMask.Merge(riverMask)
 		}
-		// Step 4: Generating Roads
+		// Step 4: Preparing Road Nodes
+		var roadNodes []*PointOfInterest
+		var roadTarget int
+		var edgeToEdgeOnly bool
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			pois       []*PointOfInterest
+			target     int
+			edgeToEdge bool
+		} {
+			pois, target, edgeToEdge := PrepareRoadNodes(settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+			return struct {
+				pois       []*PointOfInterest
+				target     int
+				edgeToEdge bool
+			}{pois: pois, target: target, edgeToEdge: edgeToEdge}
+		}); ok {
+			roadNodes, roadTarget, edgeToEdgeOnly = out.pois, out.target, out.edgeToEdge
+		} else {
+			log.Println("PrepareRoadNodes timed out after 1 minute; continuing.")
+			roadNodes = nil
+			roadTarget = 0
+			edgeToEdgeOnly = false
+		}
+
+		// Step 5: Generating Fortifications
+		var wallLayout *FortificationLayout
+		fortBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+			layout *FortificationLayout
+		} {
+			layout, _ := GenerateFortifications(fortBase, settings.Width, settings.Height, settings, waterMask, roadNodes, seedProvider.Next())
+			return struct {
+				layout *FortificationLayout
+			}{layout: layout}
+		}); ok {
+			wallLayout = out.layout
+			if wallLayout != nil {
+				wallMask = wallLayout.Mask
+			} else {
+				wallMask = NewPixelMask(settings.Width, settings.Height)
+			}
+			finalImage = fortBase
+		} else {
+			log.Println("GenerateFortifications timed out after 1 minute; continuing.")
+			wallLayout = &FortificationLayout{Mask: NewPixelMask(settings.Width, settings.Height)}
+			wallMask = wallLayout.Mask
+		}
+
+		// Step 6: Generating Roads
 		var roadAnchors []image.Point
 		roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
@@ -240,7 +289,7 @@ func main() {
 			ex  *PixelMask
 			anc []image.Point
 		} {
-			rd, br, ex, anc := GenerateRoads(roadBase, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+			rd, br, ex, anc := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
 			return struct {
 				rd  *PixelMask
 				br  *PixelMask
@@ -258,13 +307,21 @@ func main() {
 			roadAnchors = nil
 		}
 
-		// Step 5: Generating Buildings
+		placementMask := cloneMask(roadMask)
+		if placementMask == nil {
+			placementMask = NewPixelMask(settings.Width, settings.Height)
+		}
+		if wallMask != nil {
+			placementMask.Merge(wallMask)
+		}
+
+		// Step 7: Generating Buildings
 		buildingBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 		if out, ok := runWithTimeout(generationStepTimeout, func() struct {
 			blds [][]image.Point
 			bmsk *PixelMask
 		} {
-			blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+			blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, placementMask, exitRoadMask, seedProvider.Next())
 			return struct {
 				blds [][]image.Point
 				bmsk *PixelMask
@@ -278,10 +335,10 @@ func main() {
 			buildingMask = NewPixelMask(settings.Width, settings.Height)
 		}
 
-		// Step 6: Generating Trees
+		// Step 8: Generating Trees
 		treeBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 		if out, ok := runWithTimeout(generationStepTimeout, func() *PixelMask {
-			return GenerateTrees(treeBase, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+			return GenerateTrees(treeBase, waterMask, placementMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 		}); ok {
 			treeMask = out
 			finalImage = treeBase
@@ -296,8 +353,8 @@ func main() {
 		// Step 8: Flattening Building Areas
 		flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
-		// Step 9: Flattening Road Areas
-		flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadMask)
+		// Step 9: Flattening Road and Wall Areas
+		flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, placementMask)
 
 		// Step 10: Applying Roughness
 		compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
@@ -613,6 +670,66 @@ func main() {
 		settings.MinRoadAngle = val
 	}))
 
+	minWallWidthSlider := newNumericInputSliderWithStep(minWallWidthPercent, maxWallWidthPercent, settings.MinWallWidth, wallWidthPercentStep, "%.1f%%", "Min Wall Width")
+	minWallWidthSlider.entry.OnChanged = func(s string) {
+		minWallWidthSlider.validate(s, func(hasError bool) {
+			errorStates["minWallWidth"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	minWallWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := minWallWidthSlider.value.Get()
+		settings.MinWallWidth = val
+	}))
+
+	maxWallWidthSlider := newNumericInputSliderWithStep(minWallWidthPercent, maxWallWidthPercent, settings.MaxWallWidth, wallWidthPercentStep, "%.1f%%", "Max Wall Width")
+	maxWallWidthSlider.entry.OnChanged = func(s string) {
+		maxWallWidthSlider.validate(s, func(hasError bool) {
+			errorStates["maxWallWidth"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	maxWallWidthSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := maxWallWidthSlider.value.Get()
+		settings.MaxWallWidth = val
+	}))
+
+	numWallsSlider := newNumericInputSlider(1, 5, float64(settings.NumWalls), "%.0f", "Number of Walls")
+	numWallsSlider.entry.OnChanged = func(s string) {
+		numWallsSlider.validate(s, func(hasError bool) {
+			errorStates["numWalls"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	numWallsSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := numWallsSlider.value.Get()
+		settings.NumWalls = int(val)
+	}))
+
+	cityCoverageSlider := newNumericInputSlider(1, 100, settings.CityCoverage, "%.0f%%", "City Coverage")
+	cityCoverageSlider.entry.OnChanged = func(s string) {
+		cityCoverageSlider.validate(s, func(hasError bool) {
+			errorStates["cityCoverage"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	cityCoverageSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := cityCoverageSlider.value.Get()
+		settings.CityCoverage = val
+	}))
+
+	wallCurvynessSlider := newNumericInputSlider(0, 100, settings.WallCurvyness, "%.0f%%", "Wall Curvyness")
+	wallCurvynessSlider.entry.OnChanged = func(s string) {
+		wallCurvynessSlider.validate(s, func(hasError bool) {
+			errorStates["wallCurvyness"] = hasError
+			updateGenerateBtnState()
+		})
+	}
+	wallCurvynessSlider.value.AddListener(binding.NewDataListener(func() {
+		val, _ := wallCurvynessSlider.value.Get()
+		settings.WallCurvyness = val
+	}))
+
 	// Create UI elements for error display and action buttons
 	errorLabel := widget.NewLabel("")
 	errorLabel.Wrapping = fyne.TextWrapWord
@@ -631,7 +748,7 @@ func main() {
 		showSaveDialog(w, bumpmapImg.Image, settings)
 	})
 	exportMasksBtn := widget.NewButton("Export Masks", func() {
-		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverMask, treeMask, roadMask, bridgeMask, buildingMask)
+		showMasksSaveDialog(w, canvasImg.Image, heightmapImg.Image, bumpmapImg.Image, settings, lakes, riverMask, treeMask, roadMask, bridgeMask, wallMask, buildingMask)
 	})
 	// Main generation button and logic
 	generateBtn = widget.NewButton("Generate", func() {
@@ -660,16 +777,16 @@ func main() {
 			}
 			// Step 1: Generating Heightmap
 			fyne.Do(func() {
-				progressLabel.SetText("Step 1 of 11: Generating Heightmap")
-				progressBar.SetValue(1.0 / 11.0)
+				progressLabel.SetText("Step 1 of 13: Generating Heightmap")
+				progressBar.SetValue(1.0 / 13.0)
 			})
 			noiseImg := GenerateHeightmap(settings.Width, settings.Height, int(settings.Detail), 100.0, seedProvider.Next())
 
 			// Step 2: Generating Lakes
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 2 of 11: Generating Lakes")
-				progressBar.SetValue(2.0 / 11.0)
+				progressLabel.SetText("Step 2 of 13: Generating Lakes")
+				progressBar.SetValue(2.0 / 13.0)
 			})
 			var lakeImage image.Image = image.NewRGBA(image.Rect(0, 0, settings.Width, settings.Height))
 			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
@@ -693,8 +810,8 @@ func main() {
 			// Step 3: Generating Rivers
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 3 of 11: Generating Rivers")
-				progressBar.SetValue(3.0 / 11.0)
+				progressLabel.SetText("Step 3 of 13: Generating Rivers")
+				progressBar.SetValue(3.0 / 13.0)
 			})
 			riverBase := cloneToRGBA(lakeImage, settings.Width, settings.Height)
 			finalImage := riverBase
@@ -720,11 +837,71 @@ func main() {
 				waterMask.Merge(riverMask)
 			}
 
-			// Step 4: Generating Roads
+			// Step 4: Preparing Road Nodes
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 4 of 11: Generating Roads")
-				progressBar.SetValue(4.0 / 11.0)
+				progressLabel.SetText("Step 4 of 13: Preparing Road Nodes")
+				progressBar.SetValue(4.0 / 13.0)
+			})
+			var roadNodes []*PointOfInterest
+			var roadTarget int
+			var edgeToEdgeOnly bool
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				pois       []*PointOfInterest
+				target     int
+				edgeToEdge bool
+			} {
+				pois, target, edgeToEdge := PrepareRoadNodes(settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+				return struct {
+					pois       []*PointOfInterest
+					target     int
+					edgeToEdge bool
+				}{pois: pois, target: target, edgeToEdge: edgeToEdge}
+			}); ok {
+				roadNodes, roadTarget, edgeToEdgeOnly = out.pois, out.target, out.edgeToEdge
+			} else {
+				log.Println("PrepareRoadNodes timed out after 1 minute; continuing.")
+				addTimeout("Road Nodes")
+				roadNodes = nil
+				roadTarget = 0
+				edgeToEdgeOnly = false
+			}
+
+			// Step 5: Generating Fortifications
+
+			fyne.Do(func() {
+				progressLabel.SetText("Step 5 of 13: Generating Fortifications")
+				progressBar.SetValue(5.0 / 13.0)
+			})
+			var wallLayout *FortificationLayout
+			fortBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
+			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
+				layout *FortificationLayout
+			} {
+				layout, _ := GenerateFortifications(fortBase, settings.Width, settings.Height, settings, waterMask, roadNodes, seedProvider.Next())
+				return struct {
+					layout *FortificationLayout
+				}{layout: layout}
+			}); ok {
+				wallLayout = out.layout
+				if wallLayout != nil {
+					wallMask = wallLayout.Mask
+				} else {
+					wallMask = NewPixelMask(settings.Width, settings.Height)
+				}
+				finalImage = fortBase
+			} else {
+				log.Println("GenerateFortifications timed out after 1 minute; continuing.")
+				addTimeout("Fortifications")
+				wallLayout = &FortificationLayout{Mask: NewPixelMask(settings.Width, settings.Height)}
+				wallMask = wallLayout.Mask
+			}
+
+			// Step 6: Generating Roads
+
+			fyne.Do(func() {
+				progressLabel.SetText("Step 6 of 13: Generating Roads")
+				progressBar.SetValue(6.0 / 13.0)
 			})
 			var roadAnchors []image.Point
 			roadBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
@@ -734,7 +911,7 @@ func main() {
 				ex  *PixelMask
 				anc []image.Point
 			} {
-				rd, br, ex, anc := GenerateRoads(roadBase, settings.Width, settings.Height, settings, waterMask, seedProvider.Next())
+				rd, br, ex, anc := GenerateRoadsWithPOIs(roadBase, settings.Width, settings.Height, settings, waterMask, wallLayout, roadNodes, roadTarget, edgeToEdgeOnly, seedProvider.Next())
 				return struct {
 					rd  *PixelMask
 					br  *PixelMask
@@ -752,19 +929,26 @@ func main() {
 				exitRoadMask = NewPixelMask(settings.Width, settings.Height)
 				roadAnchors = nil
 			}
+			placementMask := cloneMask(roadMask)
+			if placementMask == nil {
+				placementMask = NewPixelMask(settings.Width, settings.Height)
+			}
+			if wallMask != nil {
+				placementMask.Merge(wallMask)
+			}
 
-			// Step 5: Generating Buildings
+			// Step 7: Generating Buildings
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 5 of 11: Generating Buildings")
-				progressBar.SetValue(5.0 / 11.0)
+				progressLabel.SetText("Step 7 of 13: Generating Buildings")
+				progressBar.SetValue(7.0 / 13.0)
 			})
 			buildingBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 			if out, ok := runWithTimeout(generationStepTimeout, func() struct {
 				blds [][]image.Point
 				bmsk *PixelMask
 			} {
-				blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, roadMask, exitRoadMask, seedProvider.Next())
+				blds, bmsk := GenerateBuildings(buildingBase, settings.Width, settings.Height, settings, roadAnchors, waterMask, placementMask, exitRoadMask, seedProvider.Next())
 				return struct {
 					blds [][]image.Point
 					bmsk *PixelMask
@@ -779,45 +963,45 @@ func main() {
 				buildingMask = NewPixelMask(settings.Width, settings.Height)
 			}
 
-			// Step 6: Darkening Water Areas
+			// Step 8: Darkening Water Areas
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 6 of 11: Darkening Water Areas")
-				progressBar.SetValue(6.0 / 11.0)
+				progressLabel.SetText("Step 8 of 13: Darkening Water Areas")
+				progressBar.SetValue(8.0 / 13.0)
 			})
 			darkenedHeightmap := DarkenLakeAreas(noiseImg, waterMask)
 
-			// Step 7: Flattening Building Areas
+			// Step 9: Flattening Building Areas
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 7 of 11: Flattening Building Areas")
-				progressBar.SetValue(7.0 / 11.0)
+				progressLabel.SetText("Step 9 of 13: Flattening Building Areas")
+				progressBar.SetValue(9.0 / 13.0)
 			})
 			flattenedBuildingHeightmap := FlattenBuildingAreas(darkenedHeightmap.(*image.RGBA), buildings, settings.Width, settings.Height)
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 8 of 11: Flattening Road Areas")
-				progressBar.SetValue(8.0 / 11.0)
+				progressLabel.SetText("Step 10 of 13: Flattening Road and Wall Areas")
+				progressBar.SetValue(10.0 / 13.0)
 			})
-			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, roadMask)
+			flattenedHeightmap := FlattenRoadAreas(flattenedBuildingHeightmap, placementMask)
 
-			// Step 8: Applying Roughness
+			// Step 11: Applying Roughness
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 9 of 11: Applying Roughness")
-				progressBar.SetValue(9.0 / 11.0)
+				progressLabel.SetText("Step 11 of 13: Applying Roughness")
+				progressBar.SetValue(11.0 / 13.0)
 			})
 			compositeImg := ApplyRoughness(flattenedHeightmap, settings.Roughness)
 
-			// Step 9: Generating Trees
+			// Step 12: Generating Trees
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 10 of 11: Generating Trees")
-				progressBar.SetValue(10.0 / 11.0)
+				progressLabel.SetText("Step 12 of 13: Generating Trees")
+				progressBar.SetValue(12.0 / 13.0)
 			})
 			treeBase := cloneToRGBA(finalImage, settings.Width, settings.Height)
 			if out, ok := runWithTimeout(generationStepTimeout, func() *PixelMask {
-				return GenerateTrees(treeBase, waterMask, roadMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
+				return GenerateTrees(treeBase, waterMask, placementMask, buildingMask, settings.MinTreeSize, settings.MaxTreeSize, settings.TreeCoverage, settings.TreeClumpiness, seedProvider.Next())
 			}); ok {
 				treeMask = out
 				finalImage = treeBase
@@ -827,10 +1011,10 @@ func main() {
 				treeMask = NewPixelMask(settings.Width, settings.Height)
 			}
 
-			// Step 10: Generating Bump Map
+			// Step 13: Generating Bump Map
 
 			fyne.Do(func() {
-				progressLabel.SetText("Step 11 of 11: Generating Bump Map")
+				progressLabel.SetText("Step 13 of 13: Generating Bump Map")
 				progressBar.SetValue(1.0)
 			})
 			bumpMap := GenerateBumpMap(compositeImg.(*image.RGBA), settings.Width, settings.Height, 0.10)
@@ -941,6 +1125,14 @@ func main() {
 		minRoadAngleSlider,
 		roadCurvynessSlider,
 		roadDistributionSlider,
+	))
+
+	fortificationsTab := container.NewTabItem("Fortifications", container.NewVBox(
+		minWallWidthSlider,
+		maxWallWidthSlider,
+		numWallsSlider,
+		cityCoverageSlider,
+		wallCurvynessSlider,
 	))
 	numBuildingsSlider := newNumericInputSlider(0, 10000, float64(settings.NumBuildings), "%.0f", "Number of Buildings")
 	numBuildingsSlider.entry.OnChanged = func(s string) {
@@ -1219,6 +1411,7 @@ func main() {
 		terrainTab,
 		waterTab,
 		roadsTab,
+		fortificationsTab,
 		buildingsTab,
 	)
 
@@ -1303,7 +1496,7 @@ func encodeImageToWriter(w io.Writer, img image.Image, format string) error {
 }
 
 // showMasksSaveDialog displays a dialog for saving the generated masks.
-func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverMask, treeMask, roadMask, bridgeMask, buildingMask *PixelMask) {
+func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg image.Image, settings *Settings, lakes [][]image.Point, riverMask, treeMask, roadMask, bridgeMask, wallMask, buildingMask *PixelMask) {
 	// Create UI elements for the save dialog
 	fileNameEntry := widget.NewEntry()
 	fileNameEntry.SetPlaceHolder("masks_folder")
@@ -1387,6 +1580,7 @@ func showMasksSaveDialog(win fyne.Window, canvasImg, heightmapImg, bumpmapImg im
 			{name: "trees_mask." + imgFormat, make: func() image.Image { return maskToGray(treeMask) }},
 			{name: "roads_mask." + imgFormat, make: func() image.Image { return maskToGray(roadMask) }},
 			{name: "bridges_mask." + imgFormat, make: func() image.Image { return maskToGray(bridgeMask) }},
+			{name: "walls_mask." + imgFormat, make: func() image.Image { return maskToGray(wallMask) }},
 			{name: "buildings_mask." + imgFormat, make: func() image.Image { return maskToGray(buildingMask) }},
 		}
 

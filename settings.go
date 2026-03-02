@@ -44,6 +44,13 @@ type Settings struct {
 	RoadDistribution float64 `json:"road_distribution"`
 	MinRoadAngle     float64 `json:"min_road_angle"`
 
+	// Fortification settings
+	MinWallWidth  float64 `json:"min_wall_width"`
+	MaxWallWidth  float64 `json:"max_wall_width"`
+	NumWalls      int     `json:"num_walls"`
+	CityCoverage  float64 `json:"city_coverage"`
+	WallCurvyness float64 `json:"wall_curvyness"`
+
 	// Building settings
 	NumBuildings         int     `json:"num_buildings"`
 	MinBuildingSize      float64 `json:"min_building_size"`
@@ -139,6 +146,11 @@ func LoadSettings() (*Settings, error) {
 				RoadCurvyness:         50,
 				RoadDistribution:      50,
 				MinRoadAngle:          18,
+				MinWallWidth:          1.5,
+				MaxWallWidth:          4.0,
+				NumWalls:              1,
+				CityCoverage:          70,
+				WallCurvyness:         35,
 				NumBuildings:          200,
 				MinBuildingSize:       3.5,
 				MaxBuildingSize:       10.0,
@@ -200,9 +212,44 @@ func LoadSettings() (*Settings, error) {
 	if settings.BuildingsPerRoad == 0 {
 		settings.BuildingsPerRoad = 6
 	}
+	if _, ok := rawKeys["min_wall_width"]; !ok {
+		settings.MinWallWidth = 1.5
+	}
+	if _, ok := rawKeys["max_wall_width"]; !ok {
+		settings.MaxWallWidth = 4.0
+	}
+	if settings.NumWalls == 0 {
+		settings.NumWalls = 1
+	}
+	if settings.CityCoverage == 0 {
+		settings.CityCoverage = 70
+	}
 	if _, ok := rawKeys["min_road_angle"]; !ok {
 		settings.MinRoadAngle = 18
 	}
+	if _, ok := rawKeys["wall_curvyness"]; !ok {
+		settings.WallCurvyness = 35
+	}
+
+	// Wall widths are percentages of average image dimension.
+	// Migrate older pixel-based values when they exceed the valid percentage range.
+	if settings.MinWallWidth > maxWallWidthPercent || settings.MaxWallWidth > maxWallWidthPercent {
+		avgDim := averageImageDimension(settings.Width, settings.Height)
+		if avgDim < 1 {
+			avgDim = 1
+		}
+		settings.MinWallWidth = (settings.MinWallWidth / avgDim) * 100.0
+		settings.MaxWallWidth = (settings.MaxWallWidth / avgDim) * 100.0
+	}
+	settings.MinWallWidth, settings.MaxWallWidth = normalizeWallWidthPercentRange(settings.MinWallWidth, settings.MaxWallWidth)
+	if settings.NumWalls < 1 {
+		settings.NumWalls = 1
+	}
+	if settings.NumWalls > 5 {
+		settings.NumWalls = 5
+	}
+	settings.CityCoverage = clamp(settings.CityCoverage, 1, 100)
+	settings.WallCurvyness = clamp(settings.WallCurvyness, 0, 100)
 
 	// Tree sizes are percentages of average image dimension.
 	// Migrate older pixel-based values when they exceed the valid percentage range.
